@@ -1,0 +1,22 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: signalpost-core-engine
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/signalpost_analytics_prod}
+    username: ${SPRING_DATASOURCE_USERNAME:engine_admin_chandra}
+    password: ${SPRING_DATASOURCE_PASSWORD:VaultProductionPassword2026_Secure}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+agent:
+  service:
+    url: ${AGENT_SERVICE_URL:http://localhost:8000}
