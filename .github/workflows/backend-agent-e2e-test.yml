@@ -10,14 +10,16 @@ jobs:
 
     services:
       postgres:
-        image: ankane/pgvector:v0.5.1
+        image: postgres:15
         env:
           POSTGRES_DB: signalpost_analytics_prod
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+        options: >-
+          --health-cmd="pg_isready -U postgres -d signalpost_analytics_prod"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
 
     steps:
       - name: Checkout code
@@ -34,54 +36,72 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Initialize PostgreSQL Database
+      - name: Wait for Postgres readiness
         run: |
-          PGPASSWORD=postgres psql -h localhost -U postgres -d signalpost_analytics_prod -f db/init.sql
+          for i in {1..40}; do
+            if pg_isready -h localhost -p 5432 -U postgres -d signalpost_analytics_prod; then
+              echo "Postgres ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Initialize PostgreSQL Database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          echo "Creating vector extension if needed"
+          psql -h localhost -U postgres -d signalpost_analytics_prod -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          echo "Running DB init script"
+          psql -h localhost -U postgres -d signalpost_analytics_prod -f db/init.sql
 
       - name: Build and Start AI Agent
         run: |
           cd agent
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
           nohup python main.py > agent.log 2>&1 &
-          echo "Waiting for AI agent..."
-          for i in {1..30}; do
-            if curl -s http://localhost:8000/health > /dev/null; then
+          echo "Waiting for AI Agent..."
+          for i in {1..50}; do
+            if curl -fsS http://localhost:8000/health > /dev/null; then
               echo "AI Agent is ready!"
               break
             fi
             sleep 1
           done
+          curl -fsS http://localhost:8000/health || { echo "AI Agent did not start"; cat agent.log; exit 1; }
 
       - name: Test AI Agent Endpoints
         run: |
           echo "=== Health Check ==="
-          curl -s http://localhost:8000/health
+          curl -fsS http://localhost:8000/health
           echo -e "\n=== Crawl Equinor ASA (923609016) ==="
-          curl -s -X POST http://localhost:8000/api/v1/crawl/923609016
+          curl -fsS -X POST http://localhost:8000/api/v1/crawl/923609016
           echo -e "\n=== Crawl Invalid RegNum (invalid123) ==="
-          curl -s -X POST http://localhost:8000/api/v1/crawl/invalid123
+          curl -fsS -X POST http://localhost:8000/api/v1/crawl/invalid123
 
       - name: Build and Start Backend
         run: |
           cd backend
-          mvn clean package -DskipTests
+          mvn -B clean package -DskipTests
           nohup java -jar target/*.jar > backend.log 2>&1 &
           echo "Waiting for Backend..."
-          for i in {1..40}; do
-            if curl -s http://localhost:8080/api/companies > /dev/null; then
-              echo "Backend is ready!"
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8080/api/companies > /dev/null; then
+              echo "Backend ready!"
               break
             fi
             sleep 1
           done
+          curl -fsS http://localhost:8080/api/companies || { echo "Backend did not start"; tail -n 200 backend.log; exit 1; }
 
       - name: Test Backend API Endpoints
         run: |
           echo "=== Auth Session Endpoint ==="
-          curl -s -X POST http://localhost:8080/api/auth/session
+          curl -fsS -X POST http://localhost:8080/api/auth/session
           echo -e "\n=== Get Companies Endpoint ==="
-          curl -s http://localhost:8080/api/companies
+          curl -fsS http://localhost:8080/api/companies
           echo -e "\n=== Company Lookup DNB Bank ASA (984851006) ==="
-          curl -s -X POST http://localhost:8080/api/companies/lookup/984851006
+          curl -fsS -X POST http://localhost:8080/api/companies/lookup/984851006
           echo -e "\n=== Metrics Endpoint ==="
-          curl -s http://localhost:8080/api/metrics
+          curl -fsS http://localhost:8080/api/metrics
