@@ -6,8 +6,8 @@ spring:
     name: signalpost-core-engine
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/signalpost_analytics_prod}
-    username: ${SPRING_DATASOURCE_USERNAME:engine_admin_chandra}
-    password: ${SPRING_DATASOURCE_PASSWORD:VaultProductionPassword2026_Secure}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -16,6 +16,9 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
 
 agent:
   service:
