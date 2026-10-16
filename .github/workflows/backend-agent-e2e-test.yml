@@ -42,8 +42,15 @@ jobs:
         run: |
           cd agent
           pip install -r requirements.txt
-          python main.py &
-          sleep 5
+          nohup python main.py > agent.log 2>&1 &
+          echo "Waiting for AI agent..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8000/health > /dev/null; then
+              echo "AI Agent is ready!"
+              break
+            fi
+            sleep 1
+          done
 
       - name: Test AI Agent Endpoints
         run: |
@@ -58,8 +65,15 @@ jobs:
         run: |
           cd backend
           mvn clean package -DskipTests
-          java -jar target/*.jar &
-          sleep 12
+          nohup java -jar target/*.jar > backend.log 2>&1 &
+          echo "Waiting for Backend..."
+          for i in {1..40}; do
+            if curl -s http://localhost:8080/api/companies > /dev/null; then
+              echo "Backend is ready!"
+              break
+            fi
+            sleep 1
+          done
 
       - name: Test Backend API Endpoints
         run: |
