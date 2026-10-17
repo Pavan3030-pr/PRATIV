@@ -1,0 +1,74 @@
+services:
+  signalpost-database:
+    image: ankane/pgvector:v0.5.1
+    container_name: signalpost-postgres-node
+    environment:
+      POSTGRES_DB: signalpost_analytics_prod
+      POSTGRES_USER: engine_admin_chandra
+      POSTGRES_PASSWORD: ${SIGNALPOST_DB_PASSWORD:-signalpost_local_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U engine_admin_chandra -d signalpost_analytics_prod",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  signalpost-agent:
+    build: ./agent
+    container_name: jbox-langgraph-agent
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
+
+  signalpost-core-backend:
+    build: ./backend
+    container_name: spring-boot-core-engine
+    ports:
+      - "${SIGNALPOST_BACKEND_PORT:-8080}:8080"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://signalpost-database:5432/signalpost_analytics_prod
+      - SPRING_DATASOURCE_USERNAME=engine_admin_chandra
+      - SPRING_DATASOURCE_PASSWORD=${SIGNALPOST_DB_PASSWORD:-signalpost_local_dev}
+      - AGENT_SERVICE_URL=http://signalpost-agent:8000
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:?Required}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:?Required}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:8080/login/oauth2/code/google}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:?Required}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:?Required}
+      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:8080/login/oauth2/code/github}
+      - JWT_SECRET=${JWT_SECRET:?Required}
+      - JWT_ISSUER=${JWT_ISSUER:-prativ-api}
+      - JWT_AUDIENCE=${JWT_AUDIENCE:-prativ-api}
+      - JWT_LIFETIME=${JWT_LIFETIME:-PT15M}
+      - FRONTEND_ORIGINS=${FRONTEND_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      - APP_FRONTEND_URL=${APP_FRONTEND_URL:-http://localhost:3000}
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-false}
+    depends_on:
+      signalpost-database:
+        condition: service_healthy
+      signalpost-agent:
+        condition: service_started
+    restart: always
+    init: true
+
+  signalpost-frontend:
+    build: ./frontend
+    container_name: signalpost-enterprise-ui
+    ports:
+      - "3000:80"
+    depends_on:
+      signalpost-core-backend:
+        condition: service_started
+      signalpost-agent:
+        condition: service_started
+    restart: always
+    init: true

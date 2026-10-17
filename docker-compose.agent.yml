@@ -1,0 +1,7 @@
+# Agent only (no OAuth secrets needed):  docker compose -f docker-compose.agent.yml up --build
+# Then: curl -X POST http://localhost:8000/api/v1/crawl/923609016
+services:
+  signalpost-agent:
+    build: ./agent
+    ports:
+      - "8000:8000"
