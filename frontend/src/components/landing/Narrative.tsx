@@ -12,7 +12,7 @@ const shifts = [
   },
   {
     problem: 'Two systems disagree and nobody can prove which record is authoritative.',
-    answer: 'Vector semantic lineage links every derived claim back to its original source.',
+    answer: 'Claim-level lineage links every published fact back to its original source field, hash and timestamp.',
   },
 ]
 

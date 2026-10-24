@@ -4,7 +4,7 @@ import { Reveal } from '../ui'
 const pillars = [
   { icon: Landmark, label: 'Brønnøysund Register Centre' },
   { icon: Lock, label: 'Google & GitHub SSO' },
-  { icon: Database, label: 'PostgreSQL + pgvector' },
+  { icon: Database, label: 'PostgreSQL audit store' },
   { icon: Fingerprint, label: 'SHA-256 evidence hashing' },
   { icon: ShieldCheck, label: 'Guard-railed agent runs' },
   { icon: Workflow, label: 'Spring Boot + Python agent' },

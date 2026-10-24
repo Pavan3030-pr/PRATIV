@@ -20,9 +20,9 @@ const features: { index: string; icon: LucideIcon; title: string; copy: string; 
   {
     index: '03',
     icon: Waypoints,
-    title: 'Semantic lineage',
-    copy: 'Embeddings connect each derived claim to the evidence behind it, so relationships stay auditable.',
-    points: ['pgvector embeddings', 'Metric-level proof checks', 'Traceable derivation'],
+    title: 'Claim-level lineage',
+    copy: 'Every published fact points to the exact source field, value hash and timestamp it came from, so each claim can be re-checked.',
+    points: ['Field-level source paths', 'Metric-level proof checks', 'Vector-ready schema'],
   },
   {
     index: '04',

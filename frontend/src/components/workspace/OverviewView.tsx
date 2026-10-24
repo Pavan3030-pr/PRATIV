@@ -274,7 +274,7 @@ export function OverviewView({
             </span>
             <span className="flex items-center gap-2">
               <span className="size-1.5 rounded-full bg-warning" aria-hidden="true" />
-              LangGraph agent
+              Python agent
             </span>
             <span className="flex items-center gap-2">
               <span className="size-1.5 rounded-full bg-success" aria-hidden="true" />

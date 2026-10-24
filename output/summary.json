@@ -1,39 +1,52 @@
 {
-  "companies": 2,
-  "succeeded": 2,
-  "failed": 0,
-  "failures": [],
-  "elapsed_seconds": 8.8,
-  "requests_used": 13,
+  "companies": 53,
+  "succeeded": 51,
+  "failed": 2,
+  "failures": [
+    {
+      "company_number": "923609017",
+      "status": 400,
+      "error": "Invalid company number '923609017'. Must be 9 digits with a valid Modulus 11 check digit."
+    },
+    {
+      "company_number": "000000000",
+      "status": 404,
+      "error": "No Brreg company record exists for this organization number."
+    }
+  ],
+  "elapsed_seconds": 46.6,
+  "requests_used": 213,
   "request_cap": 1900,
-  "average_fields_found": 10.0,
+  "average_fields_found": 11.59,
   "expected_fields": 17,
   "field_coverage_percent": {
     "official_legal_name": 100.0,
     "organisation_form": 100.0,
     "registered_address": 100.0,
-    "incorporation_date": 100.0,
-    "industry": 50.0,
-    "employees": 0.0,
-    "website": 100.0,
+    "incorporation_date": 86.3,
+    "industry": 96.1,
+    "employees": 5.9,
+    "website": 7.8,
     "vat_registered": 100.0,
-    "institutional_sector": 50.0,
+    "institutional_sector": 92.2,
     "company_status": 100.0,
-    "general_manager": 0.0,
-    "chair": 50.0,
-    "board_member_count": 50.0,
+    "general_manager": 31.4,
+    "chair": 82.4,
+    "board_member_count": 82.4,
     "subunit_count": 100.0,
-    "financial_revenue": 0.0,
-    "operating_result": 0.0,
-    "net_profit": 0.0
+    "financial_revenue": 19.6,
+    "operating_result": 27.5,
+    "net_profit": 27.5
   },
   "update_status_counts": {
-    "changed": 2
+    "unchanged": 51
   },
   "website_status_counts": {
-    "verified": 2
+    "no_website": 47,
+    "unreachable": 1,
+    "verified": 3
   },
   "companies_with_verified_social": 1,
-  "companies_with_dated_news": 0,
-  "wrong_company_checks_all_passed": 2
+  "companies_with_dated_news": 1,
+  "wrong_company_checks_all_passed": 51
 }

@@ -10,7 +10,7 @@ const assurances = [
 const pathSteps = [
   { label: 'Registry fetch', state: 'RECEIVED', tone: 'text-accent' },
   { label: 'Evidence hashed', state: 'SHA-256', tone: 'text-accent' },
-  { label: 'Vector lineage', state: 'INDEXED', tone: 'text-success' },
+  { label: 'Evidence stored', state: 'PERSISTED', tone: 'text-success' },
 ]
 
 export function Hero({ onStart }: { onStart: () => void }) {

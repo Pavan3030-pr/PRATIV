@@ -1,7 +1,7 @@
 # SIGNALPOST (PRATIV) — Frontend
 
 The interface for an enterprise agentic company intelligence platform: official Brreg registry
-verification, source-backed evidence, and vector semantic lineage auditing in one workspace.
+verification, source-backed evidence, and claim-level lineage auditing in one workspace.
 
 ## Local development
 

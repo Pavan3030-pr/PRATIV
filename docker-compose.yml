@@ -22,7 +22,7 @@ services:
 
   signalpost-agent:
     build: ./agent
-    container_name: jbox-langgraph-agent
+    container_name: signalpost-agent
     ports:
       - "8000:8000"
     environment:

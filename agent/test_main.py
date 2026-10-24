@@ -259,6 +259,16 @@ class ApiEndpointTests(Base, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["coverage"]["found"], 17)
         self.assertEqual(len(body["delta_sync_hash"]), 64)
 
+    async def test_batch_endpoint_returns_one_entry_per_number_in_order(self):
+        with patch("core.requests.get", side_effect=router(full_routes())):
+            response = await self.client.post("/api/v1/crawl-batch", json={"company_numbers": [N, "923609017", N, "abc"]})
+        body = response.json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([r["company_number"] for r in body["results"]], [N, "923609017", "abc"])
+        self.assertEqual(body["results"][0]["official_legal_name"], "DNB BANK ASA")
+        self.assertEqual([r.get("status") for r in body["results"][1:]], [400, 400])
+        self.assertEqual((await self.client.post("/api/v1/crawl-batch", json={"company_numbers": []})).status_code, 400)
+
     async def test_registry_not_found_and_timeout_status_codes(self):
         with patch("core.requests.get", side_effect=router({f"{core.ENHETER}/{N}": (404, {})})):
             self.assertEqual((await self.client.post(f"/api/v1/crawl/{N}")).status_code, 404)

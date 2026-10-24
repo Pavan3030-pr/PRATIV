@@ -9,8 +9,8 @@ const anchors = [
   },
   {
     icon: Waypoints,
-    title: 'Vector lineage',
-    copy: 'Embeddings connect each derived claim to the evidence behind it.',
+    title: 'Claim-level lineage',
+    copy: 'Each fact carries its source URL, field path, value hash and retrieval time.',
   },
   {
     icon: ShieldCheck,
@@ -29,7 +29,7 @@ const recordLines = [
   { key: 'target_metric_key', value: '"financial_revenue"' },
   { key: 'source_url_link', value: '"data.brreg.no/enhetsregisteret/…"' },
   { key: 'delta_sync_hash', value: '"sha256:3f9a…c214"' },
-  { key: 'vector_lineage', value: 'pgvector · indexed' },
+  { key: 'field_path', value: '"navn"' },
   { key: 'guardrail_status', value: 'capped · audited' },
 ]
 
@@ -43,7 +43,7 @@ export function Architecture() {
             Anchored by design.
           </h2>
           <p className="mt-5 max-w-lg text-[16px] leading-[1.7] text-white/60">
-            Verification is not a feature bolted on at the end. Hashing, embeddings, and agent
+            Verification is not a feature bolted on at the end. Hashing, field-level sources, and agent
             limits are part of how a record is written, which means the audit trail exists before
             anyone asks for one.
           </p>

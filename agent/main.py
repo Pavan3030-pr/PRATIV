@@ -47,6 +47,30 @@ class CrawlResponse(BaseModel):
     news: List[Dict[str, Any]] = []
 
 
+class BatchRequest(BaseModel):
+    company_numbers: List[str]
+
+
+@app.post("/api/v1/crawl-batch")
+def run_crawl_batch(request: BatchRequest):
+    """One result per input number, in input order. A bad or missing company yields an error entry, never a failed request."""
+    numbers = list(dict.fromkeys(n.strip() for n in request.company_numbers if isinstance(n, str) and n.strip()))
+    if not numbers:
+        raise HTTPException(status_code=400, detail="company_numbers must contain at least one organisation number.")
+    if len(numbers) > 200:
+        raise HTTPException(status_code=413, detail="At most 200 organisation numbers per batch.")
+    results = []
+    for number in numbers:
+        try:
+            results.append(core.crawl(number, store=STORE))
+        except core.CrawlError as exc:
+            results.append({"company_number": number, "error": exc.detail, "status": exc.status})
+        except Exception as exc:  # one bad company must never lose the rest of the batch
+            results.append({"company_number": number, "error": f"Unexpected error ({exc.__class__.__name__})", "status": 500})
+    STORE.save()
+    return {"count": len(results), "results": results}
+
+
 @app.get("/health")
 def health_check():
     return {"status": "HEALTHY", "service": "signalpost-agent", "version": "3.1.0",

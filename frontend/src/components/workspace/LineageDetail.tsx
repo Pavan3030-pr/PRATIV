@@ -106,7 +106,7 @@ export function LineageDetail({ company, crawl }: LineageDetailProps) {
     {
       icon: Database,
       title: 'Spring Boot audit store',
-      meta: 'PostgreSQL profile + vector-ready schema',
+      meta: 'PostgreSQL profile + evidence rows',
       state: 'PERSISTED',
       done: true,
     },
