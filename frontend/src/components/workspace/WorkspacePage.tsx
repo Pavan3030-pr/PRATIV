@@ -106,7 +106,9 @@ export function WorkspacePage() {
     return ''
   }
 
-  function handleNumberChange(value: string) {
+  function handleNumberChange(raw: string) {
+    // accept pasted "923 609 016" / "923.609.016": spaces and dots are formatting, not part of the number
+    const value = raw.replace(/[\s.\u00a0]/g, '')
     setCompanyNumber(value)
     setInputError(value ? validateNumber(value) : '')
   }

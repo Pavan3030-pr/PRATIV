@@ -1,4 +1,5 @@
-import { ArrowUpRight, BadgeCheck, CircleAlert, Database, Download, ExternalLink, FileSearch, Globe, Info } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowUpRight, BadgeCheck, CircleAlert, Database, Check, Copy, Download, ExternalLink, FileSearch, Globe, Info } from 'lucide-react'
 import { formatDate, hasMetricEvidence, normalizedName } from '../../lib/api'
 import type { AgentCrawl, Company, Evidence } from '../../types'
 
@@ -22,6 +23,28 @@ function SectionTitle({ title, meta }: { title: string; meta?: string }) {
 
 const money = (value: number | null | undefined, currency = 'NOK') =>
   value === null || value === undefined ? 'Not reported' : `${currency} ${value.toLocaleString('en-GB').replaceAll(',', ' ')}`
+
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      aria-label={copied ? `${label} copied` : `Copy ${label}`}
+      onClick={() => {
+        navigator.clipboard?.writeText(value).then(
+          () => {
+            setCopied(true)
+            window.setTimeout(() => setCopied(false), 1500)
+          },
+          () => undefined,
+        )
+      }}
+      className="inline-flex size-7 shrink-0 items-center justify-center rounded-control border border-line text-graphite hover:bg-sunken"
+    >
+      {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+    </button>
+  )
+}
 
 const safeHref = (url?: string | null) => (url && /^https?:\/\//i.test(url) ? url : undefined)
 
@@ -102,8 +125,9 @@ export function LineageDetail({ company, crawl }: LineageDetailProps) {
                 <span className="block text-[15px] font-semibold tracking-[-0.02em] text-ink">
                   {normalizedName(company)}
                 </span>
-                <span className="mono-data mt-1 block text-[12px] text-graphite">
+                <span className="mono-data mt-1 flex items-center gap-2 text-[12px] text-graphite">
                   {company.company_number}
+                  <CopyButton value={company.company_number} label="organisation number" />
                 </span>
               </span>
             </div>
@@ -227,9 +251,12 @@ export function LineageDetail({ company, crawl }: LineageDetailProps) {
         <section>
           <SectionTitle title="Update fingerprint" meta="SHA-256" />
           <div className="rounded-card border border-line bg-paper p-4">
-            <code className="mono-data block break-all text-[12px] leading-[1.6] text-ink">
-              {company.delta_sync_hash ?? crawl?.delta_sync_hash}
-            </code>
+            <div className="flex items-start justify-between gap-3">
+              <code className="mono-data block min-w-0 break-all text-[12px] leading-[1.6] text-ink">
+                {company.delta_sync_hash ?? crawl?.delta_sync_hash}
+              </code>
+              <CopyButton value={(company.delta_sync_hash ?? crawl?.delta_sync_hash) as string} label="SHA-256 hash" />
+            </div>
             <details className="group mt-3">
               <summary className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-accent">
                 <Info size={13} aria-hidden="true" />
