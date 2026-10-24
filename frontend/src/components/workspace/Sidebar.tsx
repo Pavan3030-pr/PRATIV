@@ -127,7 +127,7 @@ export function Sidebar({
               <StatusLine label="Python agent" state={agentState} />
             </div>
             <a
-              href="https://data.brreg.no/enhetsregisteret/"
+              href="https://virksomhet.brreg.no/nb/oppslag/enheter"
               target="_blank"
               rel="noreferrer"
               className="mt-4 inline-flex items-center gap-1.5 text-[12px] text-accent transition-opacity duration-200 hover:opacity-75"

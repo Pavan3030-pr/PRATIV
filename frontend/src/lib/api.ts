@@ -23,6 +23,11 @@ export function clearSessionToken() {
   window.sessionStorage.removeItem(SESSION_TOKEN_KEY)
 }
 
+/** OAuth is handled by the Spring Boot backend. A static host (Vercel) has no /oauth2 route, so the buttons only
+ *  work when a backend URL was configured at build time (VITE_API_BASE_URL) or the app runs on localhost. */
+export const oauthAvailable =
+  API_BASE_URL !== '' || ['localhost', '127.0.0.1'].includes(window.location.hostname)
+
 export function oauthAuthorizationUrl(provider: 'google' | 'github') {
   return `${API_BASE_URL}/oauth2/authorization/${provider}`
 }

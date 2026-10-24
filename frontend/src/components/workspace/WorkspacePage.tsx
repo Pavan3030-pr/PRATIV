@@ -68,8 +68,8 @@ export function WorkspacePage() {
       setCompanies(seeded)
       setPreviewMode(false)
       setMetrics(localMetrics(seeded))
-      setBackendState('online')
-      setAgentState('online')
+      setBackendState('online')   // browser mode: lookups go straight to Brreg
+      setAgentState('offline')    // no Python agent is attached to a static deployment: say so honestly
     }
     if (isRefresh) {
       addActivity(
@@ -87,7 +87,8 @@ export function WorkspacePage() {
     const startedAt = Date.now()
     void fetch('/agent/health')
       .then((response) => {
-        if (!response.ok) throw new Error('Agent unavailable')
+        // a static host answers /agent/health with index.html (HTTP 200): only real JSON counts as healthy
+        if (!response.ok || !(response.headers.get('content-type') ?? '').includes('json')) throw new Error('Agent unavailable')
         setAgentState('online')
       })
       .catch(() => setAgentState('offline'))

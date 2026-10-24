@@ -4,7 +4,7 @@ import { Brand } from '../Brand'
 import { Button } from '../ui'
 import { GoogleIcon, GithubIcon } from './ProviderIcons'
 import { useAuth } from '../../context/auth'
-import { oauthAuthorizationUrl } from '../../lib/api'
+import { oauthAuthorizationUrl, oauthAvailable } from '../../lib/api'
 
 type OAuthProvider = 'google' | 'github'
 
@@ -41,8 +41,9 @@ function ProviderButton({
     <button
       type="button"
       onClick={() => onStart(provider)}
-      disabled={busy}
+      disabled={busy || !oauthAvailable}
       aria-busy={busy}
+      title={oauthAvailable ? undefined : 'Needs the SIGNALPOST backend, which is not connected to this deployment.'}
       className="group flex h-12 w-full items-center justify-between rounded-control border border-line-strong bg-paper px-4 text-[14px] font-medium text-ink transition-[border-color,background-color,transform] duration-200 hover:border-faint hover:bg-sunken active:translate-y-px disabled:pointer-events-none disabled:opacity-55"
     >
       <span className="flex items-center gap-3">
@@ -156,6 +157,12 @@ export function AuthScreen({ onBack }: { onBack: () => void }) {
               <ArrowRight size={15} aria-hidden="true" />
             </button>
           </div>
+          {!oauthAvailable ? (
+            <p className="mt-3 text-center text-[12px] leading-[1.5] text-muted" role="note">
+              Google and GitHub sign-in need the SIGNALPOST backend, which is not connected to this
+              deployment. Use the evaluator workspace instead.
+            </p>
+          ) : null}
           <p className="mt-3 text-center text-[12px] leading-[1.5] text-faint">
             No account needed. If the backend is offline, lookups query the Brønnøysund register
             directly from your browser.
