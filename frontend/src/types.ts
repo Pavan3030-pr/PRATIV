@@ -41,6 +41,45 @@ export type AgentCrawl = {
   delta_sync_hash?: string
   explainability_logs?: string[]
   lineage_evidences?: Evidence[]
+  content_hash?: string
+  website?: WebsiteCheck
+  social_links?: SocialLink[]
+  news?: NewsItem[]
+  financials?: Financials | null
+  missing_fields?: Record<string, string>
+}
+
+export type WebsiteCheck = {
+  registry_url?: string | null
+  url?: string | null
+  status: string
+  verified: boolean
+  verified_by?: string | null
+  verified_on?: string
+  reason?: string
+}
+
+export type SocialLink = { platform: string; url: string; handle: string; found_on?: string; matched?: string }
+
+export type NewsItem = { title: string; url: string; published_at: string; source?: string }
+
+export type FinancialYear = {
+  period_start?: string | null
+  period_end: string
+  currency: string
+  account_type?: string
+  revenue: number | null
+  operating_result: number | null
+  net_result: number | null
+}
+
+export type Financials = {
+  period_start?: string | null
+  period_end?: string | null
+  currency?: string
+  account_type?: string
+  source_url?: string
+  history?: FinancialYear[]
 }
 
 export type Metrics = {

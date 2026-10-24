@@ -111,6 +111,13 @@ class CoverageAndEvidenceTests(Base):
         self.assertIn("2023-12-31", r["profile"]["financial_revenue"])
         self.assertEqual(r["financials"]["revenue"], 3)
 
+    def test_multi_year_history_lists_only_this_companys_filed_years(self):
+        rows = [account(end="2021-12-31", revenue=1), account(end="2023-12-31", revenue=3), account(end="2022-12-31", revenue=2),
+                account(org="923609016", end="2022-12-31", revenue=999), account(end="2023-12-31", revenue=7, kind="KONSERN")]
+        r = self.crawl(full_routes(**{f"{core.REGNSKAP}/{N}": (200, rows)}))
+        hist = r["financials"]["history"]
+        self.assertEqual([(h["period_end"], h["revenue"]) for h in hist], [("2023-12-31", 3), ("2022-12-31", 2), ("2021-12-31", 1)])
+
     def test_missing_figures_are_null_with_a_reason_never_estimated(self):
         r = self.crawl(full_routes(**{f"{core.REGNSKAP}/{N}": (404, {})}))
         for key in ("financial_revenue", "operating_result", "net_profit"):

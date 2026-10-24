@@ -1,4 +1,4 @@
-import { ArrowUpRight, BadgeCheck, CircleAlert, Database, ExternalLink, FileSearch } from 'lucide-react'
+import { ArrowUpRight, BadgeCheck, CircleAlert, Database, Download, ExternalLink, FileSearch, Globe, Info } from 'lucide-react'
 import { formatDate, hasMetricEvidence, normalizedName } from '../../lib/api'
 import type { AgentCrawl, Company, Evidence } from '../../types'
 
@@ -18,6 +18,34 @@ function SectionTitle({ title, meta }: { title: string; meta?: string }) {
       {meta ? <span className="text-[12px] text-faint">{meta}</span> : null}
     </div>
   )
+}
+
+const money = (value: number | null | undefined, currency = 'NOK') =>
+  value === null || value === undefined ? 'Not reported' : `${currency} ${value.toLocaleString('en-GB').replaceAll(',', ' ')}`
+
+const safeHref = (url?: string | null) => (url && /^https?:\/\//i.test(url) ? url : undefined)
+
+function downloadAuditTrail(company: Company, crawl: AgentCrawl | undefined, evidences: Evidence[]) {
+  const payload = {
+    exported_at: new Date().toISOString(),
+    note: 'Every value below is copied from its source record; nothing is estimated. Verify with source_url_link and delta_sync_hash.',
+    company_number: company.company_number,
+    legal_name: normalizedName(company),
+    delta_sync_hash: company.delta_sync_hash ?? crawl?.delta_sync_hash ?? null,
+    content_hash: crawl?.content_hash ?? null,
+    profile: company,
+    evidences,
+    agent_crawl: crawl ?? null,
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `signalpost-audit-${company.company_number}.json`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 export function LineageDetail({ company, crawl }: LineageDetailProps) {
@@ -84,6 +112,14 @@ export function LineageDetail({ company, crawl }: LineageDetailProps) {
               Registry record
             </span>
           </div>
+          <button
+            type="button"
+            onClick={() => downloadAuditTrail(company, crawl, evidences)}
+            className="mt-4 inline-flex h-9 items-center gap-2 rounded-control border border-line-strong bg-paper px-3.5 text-[13px] font-medium text-ink transition-colors duration-200 hover:bg-sunken"
+          >
+            <Download size={14} aria-hidden="true" />
+            Export audit trail (JSON)
+          </button>
 
           <dl className="mt-5 grid gap-4 border-t border-line pt-4 sm:grid-cols-[1.5fr_1fr]">
             <div>
@@ -162,7 +198,7 @@ export function LineageDetail({ company, crawl }: LineageDetailProps) {
                     evidence.explanation_chain ||
                     'Registry evidence was recorded.'}
                 </p>
-                {evidence.source_url_link ? (
+                {safeHref(evidence.source_url_link) ? (
                   <a
                     href={evidence.source_url_link}
                     target="_blank"
@@ -186,6 +222,110 @@ export function LineageDetail({ company, crawl }: LineageDetailProps) {
           </div>
         ) : null}
       </section>
+
+      {(company.delta_sync_hash || crawl?.delta_sync_hash) ? (
+        <section>
+          <SectionTitle title="Update fingerprint" meta="SHA-256" />
+          <div className="rounded-card border border-line bg-paper p-4">
+            <code className="mono-data block break-all text-[12px] leading-[1.6] text-ink">
+              {company.delta_sync_hash ?? crawl?.delta_sync_hash}
+            </code>
+            <details className="group mt-3">
+              <summary className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-accent">
+                <Info size={13} aria-hidden="true" />
+                What is this hash?
+              </summary>
+              <p className="mt-2 text-[12px] leading-[1.65] text-muted">
+                A SHA-256 fingerprint of the seven core registry fields (organisation number, name, form, founding
+                date, employees, industry, address) in a fixed order. On the next lookup the same fields are hashed
+                again: an identical hash means unchanged, a different hash means the registry changed and the
+                changed fields are listed. Anyone can recompute it from the cited source.
+              </p>
+            </details>
+          </div>
+        </section>
+      ) : null}
+
+      {crawl?.website ? (
+        <section>
+          <SectionTitle title="Web presence" meta={crawl.website.verified ? 'Ownership verified' : 'Not verified'} />
+          <div className="space-y-3 rounded-card border border-line bg-paper p-4">
+            <p className="flex items-start gap-2 text-[13px] leading-[1.6] text-graphite">
+              <Globe size={15} className="mt-0.5 shrink-0 text-muted" aria-hidden="true" />
+              {crawl.website.verified && safeHref(crawl.website.url) ? (
+                <span className="min-w-0 break-all">
+                  <a href={safeHref(crawl.website.url)} target="_blank" rel="noreferrer" className="font-medium text-accent hover:opacity-75">
+                    {crawl.website.url}
+                  </a>{' '}
+                  shows this company&apos;s {crawl.website.verified_by?.replaceAll('_', ' ')}.
+                </span>
+              ) : (
+                <span>{crawl.website.reason || 'The registry lists no website for this company.'}</span>
+              )}
+            </p>
+            {crawl.social_links?.length ? (
+              <ul className="flex flex-wrap gap-2" aria-label="Verified social accounts">
+                {crawl.social_links.filter((s) => safeHref(s.url)).map((s) => (
+                  <li key={s.platform}>
+                    <a href={s.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-[12px] text-graphite hover:bg-sunken">
+                      {s.platform} · {s.handle}
+                      <ExternalLink size={11} aria-hidden="true" />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {crawl.news?.length ? (
+              <ul className="divide-y divide-line border-t border-line">
+                {crawl.news.filter((n) => safeHref(n.url)).map((n) => (
+                  <li key={n.url} className="py-2.5">
+                    <a href={n.url} target="_blank" rel="noreferrer" className="text-[13px] font-medium text-accent hover:opacity-75">
+                      {n.title}
+                    </a>
+                    <span className="mono-data mt-0.5 block text-[11px] text-faint">Published {n.published_at}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : crawl.website.verified ? (
+              <p className="text-[12px] text-faint">No real, dated news post was found on the verified site.</p>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {crawl?.financials?.history?.length ? (
+        <section>
+          <SectionTitle title="Financial history" meta="As filed, newest first" />
+          <div className="scroll-area overflow-x-auto rounded-card border border-line bg-paper">
+            <table className="w-full min-w-[420px] border-collapse text-left">
+              <caption className="sr-only">Annual accounts filed in Regnskapsregisteret</caption>
+              <thead>
+                <tr className="border-b border-line text-[11px] tracking-[0.08em] text-faint uppercase">
+                  <th scope="col" className="px-4 py-2.5 font-medium">Year end</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">Revenue</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">Operating</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">Net result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {crawl.financials.history.map((y) => (
+                  <tr key={y.period_end} className="border-b border-line last:border-0">
+                    <th scope="row" className="mono-data px-4 py-2.5 text-[12px] font-normal text-graphite">{y.period_end}</th>
+                    <td className="mono-data px-4 py-2.5 text-right text-[12px] text-ink">{money(y.revenue, y.currency)}</td>
+                    <td className="mono-data px-4 py-2.5 text-right text-[12px] text-ink">{money(y.operating_result, y.currency)}</td>
+                    <td className="mono-data px-4 py-2.5 text-right text-[12px] text-ink">{money(y.net_result, y.currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {safeHref(crawl.financials.source_url) ? (
+            <a href={crawl.financials.source_url} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium text-accent">
+              Open filing source <ExternalLink size={12} aria-hidden="true" />
+            </a>
+          ) : null}
+        </section>
+      ) : null}
 
       <section>
         <SectionTitle title="Financial claims" meta="Strict source policy" />

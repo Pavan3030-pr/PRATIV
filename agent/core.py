@@ -249,6 +249,25 @@ def pick_accounts(payload: Any, number: str) -> Tuple[Optional[Dict[str, Any]], 
     return best, foreign
 
 
+def account_history(payload: Any, number: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """Filed figures for up to `limit` financial years of THIS company (parent accounts preferred), newest first.
+    Figures are copied as filed; a figure a filing does not report stays null."""
+    rows = payload if isinstance(payload, list) else [payload] if isinstance(payload, dict) else []
+    own = [a for a in rows if isinstance(a, dict) and str(dig(a, "virksomhet", "organisasjonsnummer")) == number]
+    pref = [a for a in own if a.get("regnskapstype") == "SELSKAP"] or own
+    by_end: Dict[str, Dict[str, Any]] = {}
+    for acc in pref:
+        end = dig(acc, "regnskapsperiode", "tilDato")
+        if isinstance(end, str) and end not in by_end:
+            res = acc.get("resultatregnskapResultat")
+            by_end[end] = {"period_start": dig(acc, "regnskapsperiode", "fraDato"), "period_end": end,
+                           "currency": _text(acc.get("valuta")) or "NOK", "account_type": acc.get("regnskapstype") or "unspecified",
+                           "revenue": to_number(dig(res, "driftsresultat", "driftsinntekter", "sumDriftsinntekter")),
+                           "operating_result": to_number(dig(res, "driftsresultat", "driftsresultat")),
+                           "net_result": to_number(dig(res, "aarsresultat"))}
+    return [by_end[k] for k in sorted(by_end, reverse=True)[:limit]]
+
+
 class SnapshotStore:
     """Remembers what each company looked like last time, to report updates correctly."""
 
@@ -518,7 +537,7 @@ def crawl(company_number: str, store: Optional[SnapshotStore] = None,
                     "net_profit": ("Net result for the year", to_number(dig(res, "aarsresultat")), "resultatregnskapResultat.aarsresultat")}
             label = f"period {period.get('fraDato', '?')} to {period.get('tilDato', '?')}, {acct_type} accounts"
             financials = {"period_start": period.get("fraDato"), "period_end": period.get("tilDato"), "currency": cur,
-                          "account_type": acct_type, "source_url": src_acc}
+                          "account_type": acct_type, "source_url": src_acc, "history": account_history(accounts, n)}
             for key, (title, num, path) in vals.items():
                 if num is None:
                     missing[key] = f"The latest filed accounts ({label}) do not report this figure."

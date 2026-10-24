@@ -22,9 +22,26 @@ export function LineageDrawer({ company, crawl, onClose }: LineageDrawerProps) {
     }
   }, [])
 
+  const panelRef = useRef<HTMLElement | null>(null)
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') onClose()
+      if (event.key !== 'Tab' || !panelRef.current) return
+      // keep keyboard focus inside the modal dialog
+      const focusable = panelRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), summary, input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      )
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -40,6 +57,7 @@ export function LineageDrawer({ company, crawl, onClose }: LineageDrawerProps) {
     >
       <div className="absolute inset-0 bg-ink/25" aria-hidden="true" />
       <aside
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="lineage-drawer-title"
