@@ -58,14 +58,14 @@ PUBLISHED_ATTR = re.compile(r"(^|[-_ ])(date|dato|published|posted|post-date|ent
 RESERVED = {"sharer", "sharer.php", "share", "share.php", "dialog", "plugins", "tr", "intent", "home", "explore", "hashtag", "search",
             "login", "signup", "policies", "help", "about", "legal", "privacy", "pages", "p", "reel", "reels", "stories", "accounts",
             "watch", "feed", "shareArticle", "company", "in", "pub", "groups", "events", "people", "profile.php", "settings", "i",
-            "oauth", "tiktok", "facebook", "instagram", "linkedin", "twitter", "x", "youtube", "wordpress", "wix", "squarespace",
+            "oauth", "tiktok", "embed", "playlist", "results", "shorts", "channel", "feed", "gaming", "music", "premium", "podcasts", "live", "hashtag", "videos", "iframe_api", "facebook", "instagram", "linkedin", "twitter", "x", "youtube", "wordpress", "wix", "squarespace",
             "shopify", "elementor", "envato", "themeforest", "elegantthemes", "divi", "godaddy", "jimdo", "webflow", "weebly"}
 SOCIAL_PATTERNS = {
     "facebook": (re.compile(r"^(?:[a-z]{2}-[a-z]{2}\.|www\.|m\.)?facebook\.com$"), r"^/([A-Za-z0-9.\-_]{3,})/?$", "https://www.facebook.com/{h}"),
     "instagram": (re.compile(r"^(?:www\.)?instagram\.com$"), r"^/([A-Za-z0-9._]{2,})/?$", "https://www.instagram.com/{h}"),
     "linkedin": (re.compile(r"^(?:[a-z]{2}\.|www\.)?linkedin\.com$"), r"^/(?:company|school)/([^/?#]{2,})/?$", "https://www.linkedin.com/company/{h}"),
     "x": (re.compile(r"^(?:www\.|mobile\.)?(?:twitter|x)\.com$"), r"^/([A-Za-z0-9_]{2,15})/?$", "https://x.com/{h}"),
-    "youtube": (re.compile(r"^(?:www\.|m\.)?youtube\.com$"), r"^/(@[A-Za-z0-9._\-]{3,}|c/[^/?#]+|user/[^/?#]+)/?$", "https://www.youtube.com/{h}"),
+    "youtube": (re.compile(r"^(?:www\.|m\.)?youtube\.com$"), r"^/(@[A-Za-z0-9._\-]{3,}|c/[^/?#]+|user/[^/?#]+|[A-Za-z0-9_\-]{3,})/?$", "https://www.youtube.com/{h}"),
     "tiktok": (re.compile(r"^(?:www\.)?tiktok\.com$"), r"^/(@[A-Za-z0-9._]{2,})/?$", "https://www.tiktok.com/{h}"),
 }
 MONTHS = {"januar": 1, "jan": 1, "january": 1, "februar": 2, "feb": 2, "february": 2, "mars": 3, "mar": 3, "march": 3,
@@ -519,12 +519,24 @@ def find_feed(page: Page) -> Optional[str]:
     return feeds[0] if feeds else None
 
 
+NEWS_LABEL = re.compile(r"^(nyheter|nyhet|news|aktuelt|siste nytt|latest news|news & media|news and media|presse|press|pressemeldinger|press releases|blogg|blog|media)$", re.I)
+
+
 def find_news_page(page: Page) -> Optional[str]:
+    """Best link to a news/blog listing: a root-level news path first, then any shallow path or link label that says news."""
+    best = None
     for a in page.soup.find_all("a", href=True):
         url = urljoin(page.url, a["href"].split("#")[0].split("?")[0])
-        if same_site(url, page.url) and NEWS_HINT.match(urlparse(url).path or "/"):
+        if not same_site(url, page.url):
+            continue
+        path = urlparse(url).path or "/"
+        if NEWS_HINT.match(path):
             return url
-    return None
+        last = path.rstrip("/").rsplit("/", 1)[-1]
+        shallow = path.rstrip("/").count("/") <= 3
+        if best is None and shallow and (NEWS_HINT.match("/" + last + "/") or NEWS_LABEL.match(re.sub(r"\s+", " ", a.get_text(" ")).strip())):
+            best = url
+    return best
 
 
 def dedupe_news(items: List[Dict[str, Any]], today: date) -> List[Dict[str, Any]]:

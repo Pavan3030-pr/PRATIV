@@ -200,6 +200,19 @@ class NewsTests(unittest.TestCase):
         self.assertIsNone(web.parse_date("i går"))
 
 
+class RealWorldRegressionTests(unittest.TestCase):
+    """Cases seen on the first real run (Equinor, DNB)."""
+    def test_youtube_vanity_url_matching_the_company_is_published(self):
+        home = FOOTER_OWN + '<a href="https://www.youtube.com/foonorge">YT</a><a href="https://www.youtube.com/embed/abc">v</a><a href="https://www.youtube.com/feed/x">f</a>'
+        self.assertEqual([s["url"] for s in run({"https://foo.no": home})["social_links"]], ["https://www.youtube.com/foonorge"])
+
+    def test_news_page_found_under_a_nested_path_by_link_text(self):
+        home = FOOTER_OWN + '<a href="/en/about-us/news-and-media">News</a>'
+        listing = ARTICLE.format(u="/en/about-us/news-and-media/new-bridge-contract-signed", t="New bridge contract signed with the county", d="2026-10-10")
+        r = run({"https://foo.no": home, "https://foo.no/en/about-us/news-and-media": listing})
+        self.assertEqual([n["published_at"] for n in r["news"]], ["2026-10-10"])
+
+
 class CoreIntegrationTests(unittest.TestCase):
     def setUp(self):
         for target, value in (("BACKOFF", (0, 0)), ("MIN_INTERVAL", 0)):

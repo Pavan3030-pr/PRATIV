@@ -3,7 +3,7 @@
   "succeeded": 2,
   "failed": 0,
   "failures": [],
-  "elapsed_seconds": 12.9,
+  "elapsed_seconds": 12.1,
   "requests_used": 13,
   "request_cap": 1900,
   "average_fields_found": 15.5,
@@ -28,7 +28,8 @@
     "net_profit": 50.0
   },
   "update_status_counts": {
-    "new": 2
+    "changed": 1,
+    "unchanged": 1
   },
   "website_status_counts": {
     "verified": 2
