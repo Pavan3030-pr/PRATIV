@@ -213,6 +213,30 @@ class RealWorldRegressionTests(unittest.TestCase):
         self.assertEqual([n["published_at"] for n in r["news"]], ["2026-10-10"])
 
 
+class SubdomainAndDomainHandleTests(unittest.TestCase):
+    """Cases from the 100-company run: a scout group on a parent's subdomain, and a handle equal to the full domain."""
+    def test_parent_organisations_accounts_are_not_published_for_a_subdomain_site(self):
+        name = "1. BJORKELANGEN SPEIDERGRUPPE"
+        home = ('<p>1. Bjorkelangen speidergruppe</p><a href="https://www.instagram.com/speiding">ig</a>'
+                '<a href="https://facebook.com/speiding">fb</a><a href="https://www.facebook.com/1bjorkelangenspeidergruppe">own</a>'
+                '<a href="https://www.instagram.com/bjorkelangen">own ig</a>')
+        r = run({"https://bjorkelangen.speiding.no": home}, website="https://bjorkelangen.speiding.no", name=name, number=N)
+        self.assertEqual(r["website"]["status"], "verified")
+        self.assertEqual({s["platform"]: s["handle"] for s in r["social_links"]}, {"facebook": "1bjorkelangenspeidergruppe", "instagram": "bjorkelangen"})
+
+    def test_handle_equal_to_full_domain_or_domain_plus_legal_suffix_matches(self):
+        home = ('<p>2-CON SVERIGE AB</p><a href="https://www.instagram.com/2con.se">ig</a>'
+                '<a href="https://www.linkedin.com/company/2con-ab">li</a><a href="https://www.linkedin.com/company/other-ab">no</a>')
+        r = run({"https://www.2con.se": home}, website="www.2con.se", name="2-CON SVERIGE AB")
+        self.assertEqual({s["platform"] for s in r["social_links"]}, {"instagram", "linkedin"})
+        self.assertEqual([s for s in r["social_links"] if s["platform"] == "linkedin"][0]["handle"], "2con-ab")
+
+    def test_own_domain_keys(self):
+        self.assertEqual(set(web.own_domain_keys("bjorkelangen.speiding.no")), {"bjorkelangen"})
+        self.assertEqual(set(web.own_domain_keys("foo.co.uk")), {"foo", "foocouk"})
+        self.assertEqual(set(web.own_domain_keys("www.2con.se")), {"2con", "2conse"})
+
+
 class CoreIntegrationTests(unittest.TestCase):
     def setUp(self):
         for target, value in (("BACKOFF", (0, 0)), ("MIN_INTERVAL", 0)):

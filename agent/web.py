@@ -275,8 +275,30 @@ def candidate_pages(page: Page, limit: int = 3) -> List[str]:
 
 
 # --------------------------------------------------------------------------- 2. social links
+PUBLIC_SLD = {"co", "com", "org", "net", "ac", "gov", "edu"}
+
+
+def own_domain_keys(site_host: str) -> Dict[str, str]:
+    """Keys derived from the verified site's host. A subdomain such as bjorkelangen.speiding.no belongs to a local unit of
+    speiding.no, so its own label is 'bjorkelangen': the parent's 'speiding' must never count as this company's name."""
+    labels = [l for l in site_host.lower().split(".") if l and l != "www"]
+    if len(labels) < 2:
+        return {}
+    cut = 3 if len(labels) >= 3 and labels[-2] in PUBLIC_SLD else 2
+    registrable, extra = labels[-cut:], labels[:-cut]
+    keys: Dict[str, str] = {}
+    if extra:
+        keys[fold(extra[-1])] = "own verified website subdomain"
+        keys[fold(".".join(extra))] = "own verified website subdomain"
+    else:
+        keys[fold(registrable[0])] = "own verified website domain"
+        keys[fold(".".join(registrable))] = "own verified website domain"
+    keys.pop("", None)
+    return keys
+
+
 def name_keys(name: str, site_host: str) -> Dict[str, str]:
-    """Keys a social handle may equal. Deliberately narrow: legal name (with/without legal form) or the verified domain."""
+    """Keys a social handle may equal. Deliberately narrow: legal name (with/without legal form) or the verified site's own domain."""
     tokens = re.findall(r"\w+", name.casefold())
     core_tokens = tokens[:]
     while core_tokens and core_tokens[-1] in LEGAL_FORMS:
@@ -285,9 +307,8 @@ def name_keys(name: str, site_host: str) -> Dict[str, str]:
     if core_tokens:
         keys[fold("".join(core_tokens))] = "company name"
     keys[fold("".join(tokens))] = "company name"
-    label = site_host.split(".")[-2] if site_host.count(".") >= 1 else site_host
-    if fold(label):
-        keys.setdefault(fold(label), "own verified website domain")
+    for k, v in own_domain_keys(site_host).items():
+        keys.setdefault(k, v)
     keys.pop("", None)
     return keys
 
@@ -295,9 +316,9 @@ def name_keys(name: str, site_host: str) -> Dict[str, str]:
 def handle_variants(handle: str) -> List[str]:
     h = handle.lstrip("@")
     h = re.sub(r"[-_]?\d{4,}$", "", h)        # LinkedIn slugs end in numeric ids
-    variants = {fold(h)}
-    for suffix in ("official", "as", "asa"):
-        f = fold(h)
+    f = fold(h)
+    variants = {f}
+    for suffix in sorted(LEGAL_FORMS | {"official"}, key=len, reverse=True):
         if f.endswith(suffix) and len(f) > len(suffix) + 2:
             variants.add(f[: -len(suffix)])
     variants.discard("")
@@ -350,7 +371,9 @@ def extract_social(pages: List[Page], name: str, site_host: str) -> Tuple[List[D
                     found[platform] = {"platform": platform, "url": canon.format(h=handle), "handle": handle.lstrip("@"),
                                        "found_on": page.url, "matched": f"handle equals {match}"}
                 else:
-                    rejected.append(f"{platform}:{handle} (handle does not match this company)")
+                    msg = f"{platform}:{handle} (handle does not match this company)"
+                    if msg not in rejected:
+                        rejected.append(msg)
                 break
     return list(found.values()), rejected
 
