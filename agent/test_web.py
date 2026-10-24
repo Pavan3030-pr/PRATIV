@@ -305,8 +305,8 @@ class RunnerTests(unittest.TestCase):
         import tempfile, pathlib, run
         with tempfile.TemporaryDirectory() as d:
             p = pathlib.Path(d, "n.txt")
-            p.write_text("organisasjonsnummer\n923609016\n\n984 851 006  # DNB\n\"923609016\",x\n12345\n", encoding="utf-8")
-            self.assertEqual(run.read_numbers(p), ["923609016", "984851006", "923609016", "12345"])
+            p.write_text("organisasjonsnummer\n923609016\n\n984 851 006  # DNB\n\"923609016\",x\n12345\nabc\n", encoding="utf-8")
+            self.assertEqual(run.read_numbers(p), ["923609016", "984851006", "923609016", "12345", "abc"])
 
 
 if __name__ == "__main__":

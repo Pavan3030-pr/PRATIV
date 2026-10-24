@@ -32,19 +32,22 @@ def load_dataset_numbers():
 
 
 def read_numbers(path):
-    """One organisation number per line. Tolerates blank lines, '#' comments, a header row, CSV columns and
-    spaced numbers such as '923 609 016'. Anything that is not a clean number is kept as-is so it gets an error line."""
+    """One organisation number per line. Tolerates blank lines, '#' comments, an alphabetic header on the first line, CSV
+    columns and spaced numbers such as '923 609 016'. Any other non-blank line is kept as written so it gets its own
+    error result: one result per input line, nothing silently dropped."""
     out = []
-    for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
+    lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
+    for i, line in enumerate(lines):
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
         first = re.split(r"[,;\t]", line)[0].strip().strip('"\'')
+        if not first:
+            continue
+        if i == 0 and re.fullmatch(r"[A-Za-z_ ]+", first):
+            continue                      # header row such as 'organisasjonsnummer'
         compact = re.sub(r"[\s.]", "", first)
-        if re.fullmatch(r"\d{9}", compact):
-            out.append(compact)
-        elif re.search(r"\d", first):
-            out.append(first)          # malformed number: reported as an error result, never silently dropped
+        out.append(compact if re.fullmatch(r"\d{9}", compact) else first)
     return out
 
 
