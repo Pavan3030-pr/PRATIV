@@ -61,11 +61,14 @@ class Base(unittest.TestCase):
             p = patch.object(core, target, value)
             p.start()
             self.addCleanup(p.stop)
+        p = patch("web.public_host", return_value=False)   # tests never touch real websites
+        p.start()
+        self.addCleanup(p.stop)
 
     def crawl(self, routes, store=None, cap=50):
         with patch("core.requests.get", side_effect=router(routes)) as get:
             self.get = get
-            return core.crawl(N, store=store, budget=core.RequestBudget(cap))
+            return core.crawl(N, store=store, budget=core.RequestBudget(cap), enrich_web=False)
 
 
 class CoverageAndEvidenceTests(Base):

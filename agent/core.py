@@ -27,6 +27,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+try:
+    import web
+except ImportError:  # website enrichment needs beautifulsoup4; registry facts still work without it
+    web = None
+
 ENHETER = "https://data.brreg.no/enhetsregisteret/api/enheter"
 UNDERENHETER = "https://data.brreg.no/enhetsregisteret/api/underenheter"
 REGNSKAP = "https://data.brreg.no/regnskapsregisteret/regnskap"
@@ -40,7 +45,8 @@ REGISTRY_KEYS = ["organisasjonsnummer", "navn", "organisasjonsform_kode", "stift
                  "antallAnsatte", "naeringskode1_beskrivelse", "forretningsadresse"]
 SOURCE_GROUPS = {"roles": ["general_manager", "chair", "board_member_count"],
                  "subunits": ["subunit_count", "subunit_sample"],
-                 "accounts": ["financial_revenue", "operating_result", "net_profit"]}
+                 "accounts": ["financial_revenue", "operating_result", "net_profit"],
+                 "website": ["social_links", "news", "website_verified_by"]}
 EXPECTED = ["official_legal_name", "organisation_form", "registered_address", "incorporation_date",
             "industry", "employees", "website", "vat_registered", "institutional_sector",
             "company_status", "general_manager", "chair", "board_member_count", "subunit_count",
@@ -337,7 +343,8 @@ def _optional(url, sess, logs, label, params=None):
 
 
 def crawl(company_number: str, store: Optional[SnapshotStore] = None,
-          budget: Optional[RequestBudget] = None, now: Optional[str] = None) -> Dict[str, Any]:
+          budget: Optional[RequestBudget] = None, now: Optional[str] = None,
+          enrich_web: bool = True) -> Dict[str, Any]:
     n = company_number
     sess = Session(budget or BUDGET)
     ts = now or now_iso()
@@ -528,10 +535,66 @@ def crawl(company_number: str, store: Optional[SnapshotStore] = None,
         if why != "not_found":
             stale += SOURCE_GROUPS["accounts"]
             unavailable.append("accounts")
+    # ---- website: ownership check, social links, news (agent/web.py) -------------------------------------
+    registry_site = data.get("hjemmeside")
+    web_out: Optional[Dict[str, Any]] = None
+    web_items: List[Dict[str, Any]] = []
+    social_links: List[Dict[str, Any]] = []
+    news: List[Dict[str, Any]] = []
+    web_why = None
+    if _text(registry_site) and enrich_web and web is not None:
+        try:
+            web_out = web.enrich(n, name, registry_site, sess, _throttle, logs)
+        except CrawlError as exc:           # run-wide request budget used up
+            web_why = f"Website not read ({exc.detail})"
+            logs.append(f"Website: {web_why}; social links and news left empty.")
+        except Exception as exc:            # a malformed page must never cost the registry profile
+            web_why = f"Website check failed ({exc.__class__.__name__})"
+            logs.append(f"Website: {web_why}; social links and news left empty.")
+    elif _text(registry_site) and not enrich_web:
+        web_why = "Website not checked in this run (time budget)"
+    if web_out is not None:
+        site = web_out["website"]
+        items[:] = [i for i in items if i["key"] != "website"]
+        if site["status"] == "verified":
+            web_items = web_out["items"]
+            items.append(web_items.pop(0))                   # the website fact itself belongs to the profile
+            social_links, news = web_out["social_links"], web_out["news"]
+            if not social_links:
+                missing["social_links"] = "No social account linked on the verified site has a handle matching this company's name or domain."
+            if not news:
+                missing["news"] = "No real, dated news post (publish date, own page) was found on the verified site."
+        elif site["status"] == "not_verified":
+            missing["website"] = site["reason"]
+            missing["social_links"] = missing["news"] = "Registry website is not verified as this company's own (possible parent or brand site)."
+        elif site["status"] == "unreachable":
+            last = ((store.get(n) if store else None) or {}).get("facts") or {}
+            items.append({"key": "website", "value": last.get("website") or normalize_registry_site(registry_site), "snippet": f"Website: {registry_site.strip()} (registry value; site unreachable, ownership not verified)",
+                          "url": src_main, "path": "hjemmeside", "why": base_why.format(p="hjemmeside") + " The site could not be reached to verify it."})
+            missing["social_links"] = missing["news"] = "Website unreachable this run."
+            stale += SOURCE_GROUPS["website"]
+            unavailable.append("website")
+        else:
+            missing["website"] = "The registry's website value is not a usable web address."
+            missing["social_links"] = missing["news"] = "No usable website."
+    elif web_why:
+        missing["social_links"] = missing["news"] = web_why
+        if enrich_web:
+            stale += SOURCE_GROUPS["website"]
+            unavailable.append("website")
+    else:
+        missing.setdefault("social_links", "No website registered, so no social links were searched.")
+        missing.setdefault("news", "No website registered, so no news was searched.")
     evidences = [{"target_metric_key": i["key"], "extracted_text_snippet": i["snippet"], "source_url_link": i["url"],
                   "crawl_timestamp": ts, "explanation_chain": i["why"], "field_path": i["path"],
-                  "value_sha256": sha(i["value"])} for i in items]
+                  "value_sha256": sha(i["value"])} for i in items + web_items]
     facts = {i["key"]: i["value"] for i in items}
+    if social_links:
+        facts["social_links"] = {s["platform"]: s["url"] for s in social_links}
+    if news:
+        facts["news"] = [{k: it[k] for k in ("title", "url", "published_at")} for it in news]
+    if web_out and web_out["website"]["verified"]:
+        facts["website_verified_by"] = web_out["website"]["verified_by"]
     if sample:
         facts["subunit_sample"] = sample
     payload = registry_payload(data)
@@ -559,7 +622,13 @@ def crawl(company_number: str, store: Optional[SnapshotStore] = None,
         "missing_fields": missing,
         "coverage": {"found": len(found), "expected": len(EXPECTED), "missing": [k for k in EXPECTED if k not in facts]},
         "summary": build_summary(n, facts, financials, ts), "requests_used": sess.calls,
+        "website": (web_out or {}).get("website") or {"registry_url": registry_site if isinstance(registry_site, str) else None, "status": "not_checked", "verified": False},
+        "social_links": social_links, "news": news,
     }
+
+
+def normalize_registry_site(raw: Any) -> str:
+    return (web.normalize_url(raw) if web else None) or str(raw).strip()
 
 
 def build_summary(n: str, f: Dict[str, Any], fin: Optional[Dict[str, Any]], ts: str) -> str:
@@ -582,6 +651,10 @@ def build_summary(n: str, f: Dict[str, Any], fin: Optional[Dict[str, Any]], ts: 
         parts.append("Led by " + " and ".join(lead) + ".")
     if "subunit_count" in f:
         parts.append(f"Registered sub-units: {f['subunit_count']}.")
+    if "social_links" in f:
+        parts.append("Verified social accounts: " + ", ".join(f["social_links"]) + ".")
+    if "news" in f:
+        parts.append(f"Latest dated news: {f['news'][0]['published_at']} \u2013 {f['news'][0]['title']}.")
     if fin and "financial_revenue" in f:
         parts.append(f"Latest annual accounts ({fin.get('account_type')}, period ending {fin.get('period_end')}): revenue {f['financial_revenue'].split(' (')[0]}"
                      + (f", net result {f['net_profit'].split(' (')[0]}" if "net_profit" in f else "") + ".")

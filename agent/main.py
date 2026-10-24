@@ -17,7 +17,7 @@ STORE = core.SnapshotStore(
 app = FastAPI(
     title="SIGNALPOST Company Intelligence Agent",
     description="Finds Norwegian company facts from official Brreg registers, with per-fact evidence and update detection.",
-    version="3.0.0",
+    version="3.1.0",
 )
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
@@ -42,11 +42,14 @@ class CrawlResponse(BaseModel):
     coverage: Dict[str, Any]
     summary: str
     requests_used: int
+    website: Dict[str, Any] = {}
+    social_links: List[Dict[str, Any]] = []
+    news: List[Dict[str, Any]] = []
 
 
 @app.get("/health")
 def health_check():
-    return {"status": "HEALTHY", "service": "signalpost-agent", "version": "3.0.0",
+    return {"status": "HEALTHY", "service": "signalpost-agent", "version": "3.1.0",
             "requests_used": core.BUDGET.used, "request_cap": core.BUDGET.cap}
 
 
