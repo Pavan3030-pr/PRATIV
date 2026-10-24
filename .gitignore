@@ -1,3 +1,13 @@
-
-# local run outputs
+# local environments and run outputs
+.venv/
+venv/
+__pycache__/
+*.pyc
+node_modules/
+frontend/dist/
 /results.jsonl
+output/state.json
+agent/data/
+.env
+.env.*
+!.env.example

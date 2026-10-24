@@ -10,7 +10,11 @@
 set -euo pipefail
 export SIGNALPOST_CALLER_DIR="$PWD"   # so relative input/output paths mean what the user typed
 cd "$(dirname "$0")"
-[ -d .venv ] || python3 -m venv .venv
+# a virtualenv copied from another machine (e.g. committed by accident) points at that machine's Python: rebuild it
+if ! .venv/bin/python -c "import sys" >/dev/null 2>&1; then
+  rm -rf .venv
+  python3 -m venv .venv
+fi
 .venv/bin/pip install -q --disable-pip-version-check requests beautifulsoup4 defusedxml
 [ "$#" -gt 0 ] || set -- --random 100
 exec .venv/bin/python agent/run.py "$@"
