@@ -641,7 +641,9 @@ def crawl(company_number: str, store: Optional[SnapshotStore] = None,
         "missing_fields": missing,
         "coverage": {"found": len(found), "expected": len(EXPECTED), "missing": [k for k in EXPECTED if k not in facts]},
         "summary": build_summary(n, facts, financials, ts), "requests_used": sess.calls,
-        "website": (web_out or {}).get("website") or {"registry_url": registry_site if isinstance(registry_site, str) else None, "status": "not_checked", "verified": False},
+        "website": (web_out or {}).get("website") or ({"registry_url": None, "status": "no_website", "verified": False, "reason": "The registry lists no website for this company."}
+                    if not _text(registry_site) else
+                    {"registry_url": registry_site, "status": "not_checked", "verified": False, "reason": web_why or "Website check was skipped."}),
         "social_links": social_links, "news": news,
     }
 

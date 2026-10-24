@@ -1,39 +1,42 @@
 {
-  "companies": 2,
-  "succeeded": 2,
+  "companies": 100,
+  "succeeded": 100,
   "failed": 0,
   "failures": [],
-  "elapsed_seconds": 11.5,
-  "requests_used": 13,
+  "elapsed_seconds": 80.8,
+  "requests_used": 413,
   "request_cap": 1900,
-  "average_fields_found": 15.5,
+  "average_fields_found": 11.9,
   "expected_fields": 17,
   "field_coverage_percent": {
     "official_legal_name": 100.0,
     "organisation_form": 100.0,
     "registered_address": 100.0,
-    "incorporation_date": 100.0,
-    "industry": 100.0,
-    "employees": 100.0,
-    "website": 100.0,
+    "incorporation_date": 81.0,
+    "industry": 95.0,
+    "employees": 3.0,
+    "website": 4.0,
     "vat_registered": 100.0,
-    "institutional_sector": 100.0,
+    "institutional_sector": 93.0,
     "company_status": 100.0,
-    "general_manager": 100.0,
-    "chair": 100.0,
-    "board_member_count": 100.0,
+    "general_manager": 46.0,
+    "chair": 74.0,
+    "board_member_count": 74.0,
     "subunit_count": 100.0,
-    "financial_revenue": 50.0,
-    "operating_result": 50.0,
-    "net_profit": 50.0
+    "financial_revenue": 35.0,
+    "operating_result": 42.0,
+    "net_profit": 43.0
   },
   "update_status_counts": {
-    "unchanged": 2
+    "unchanged": 100
   },
   "website_status_counts": {
-    "verified": 2
+    "not_checked": 93,
+    "not_verified": 3,
+    "unreachable": 1,
+    "verified": 3
   },
-  "companies_with_verified_social": 2,
-  "companies_with_dated_news": 1,
-  "wrong_company_checks_all_passed": 2
+  "companies_with_verified_social": 1,
+  "companies_with_dated_news": 0,
+  "wrong_company_checks_all_passed": 100
 }

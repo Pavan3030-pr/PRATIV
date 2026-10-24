@@ -262,6 +262,13 @@ class CoreIntegrationTests(unittest.TestCase):
         self.assertEqual(second["update"]["changed_fields"], [])
         self.assertIn("website", second["update"]["sources_unavailable"])
 
+    def test_company_without_registry_website_is_reported_as_no_website(self):
+        routes = full_routes(**{f"{core.ENHETER}/{N}": (200, {k: v for k, v in ENHET.items() if k != "hjemmeside"})})
+        with patch("requests.get", side_effect=router(routes)):
+            r = core.crawl(N, budget=core.RequestBudget(60))
+        self.assertEqual(r["website"]["status"], "no_website")
+        self.assertIn("no website", r["missing_fields"]["news"].lower())
+
     def test_web_crash_never_costs_the_registry_profile(self):
         with patch("web.enrich", side_effect=RuntimeError("boom")):
             r = self.crawl({})
