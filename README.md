@@ -9,6 +9,7 @@
 - **One Command to Run (revision 2):** `./run.sh numbers.txt [results.jsonl]` reads a file of organisation numbers (one per line) and writes one JSON result per company, in input order (default `output/results.jsonl`). Older forms still work: `./run.sh` (needs only Python 3 and internet; runs the agent on 100 random companies and writes `output/results.jsonl` + `output/summary.json`). Specific companies: `./run.sh --numbers 923609016 984851006`. HTTP API only: `docker compose -f docker-compose.agent.yml up --build`. Full stack with UI and backend (needs OAuth/JWT secrets): `docker compose up --build`.
 - **Model / API Details:** Brønnøysund Register Centre Open API (`data.brreg.no`), Brreg Regnskapsregisteret open API (annual accounts), Python/FastAPI agent (`agent/core.py`), Spring Boot backend, PostgreSQL (the `pgvector` extension and a `vector` column are installed for future embeddings and are not populated by the current agent). The agent makes no LLM call, so no LLM model is used at runtime.
 - **Expected Run Costs:** Brreg is free, and no LLM tokens are consumed by the current code. The agent uses at most 4 requests per company (about 400 for a 100-company daily test, a few minutes of run time), well inside the 2,000-request and 45-minute limits. A per-run request budget (default 1,900, retries included, `SIGNALPOST_REQUEST_CAP`) is enforced in `agent/core.py`; requests are throttled to about 12 per second.
+- **Signalpost website (JBOX bonus):** https://prativ.vercel.app/#/explore (public, no login: search 1,000+ companies, open one, check each fact's source, compare two).
 - **Live demo without a backend:** https://prativ.vercel.app. Use "Enter Evaluator Workspace"; if `localhost:8080` is unreachable, lookups query Brreg directly from the browser and compute the SHA-256 hash with `crypto.subtle`.
 
 
@@ -36,10 +37,6 @@ Tests: `cd agent && python -m unittest -v test_main test_web` (offline, no netwo
 ## 1. Executive Summary & Architecture Overview
 
 SIGNALPOST is a source-first company research application. It retrieves organization identity fields from Norway's Brønnøysund Register Centre (Brreg), stores profile and evidence records, and exposes the agent and audit trail through a compact operations workspace.
-
-## Public explorer (Signalpost website bonus)
-
-Open `/#/explore`: find a company, open it, check each fact against its source, compare two. No login. Data: `python3 scripts/build_explorer_data.py`.
 
 ## Public explorer (Signalpost website bonus)
 
