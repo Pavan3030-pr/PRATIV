@@ -40,3 +40,8 @@ SIGNALPOST is a source-first company research application. It retrieves organiza
 ## Public explorer (Signalpost website bonus)
 
 Open `/#/explore`: find a company, open it, check each fact against its source, compare two. No login. Data: `python3 scripts/build_explorer_data.py`.
+
+## Public explorer (Signalpost website bonus)
+
+Open `/#/explore`: find a company, open it, check each fact against its source, compare two. No login.
+Data: `python3 scripts/build_explorer_data.py`. Smoke test: `node scripts/smoke_explorer.mjs [site-url]`.

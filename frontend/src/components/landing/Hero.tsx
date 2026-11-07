@@ -38,8 +38,8 @@ export function Hero({ onStart }: { onStart: () => void }) {
           </p>
 
           <div className="mt-9 flex flex-wrap items-center gap-3">
-            <Button size="lg" onClick={onStart} icon={<ArrowRight size={16} />}>
-              Start researching
+            <Button size="lg" onClick={() => { window.location.hash = '/explore' }} icon={<ArrowRight size={16} />}>
+              Explore 1,000+ companies
             </Button>
             <Button size="lg" variant="secondary" onClick={onStart}>
               Sign in to workspace

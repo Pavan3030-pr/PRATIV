@@ -35,8 +35,8 @@ export function SiteHeader({ onStart }: { onStart: () => void }) {
               Sign in
             </Button>
           </span>
-          <Button size="sm" onClick={onStart}>
-            Start researching
+          <Button size="sm" onClick={() => { window.location.hash = '/explore' }}>
+            Explore companies
           </Button>
         </div>
       </div>

@@ -96,6 +96,9 @@ const simplePath = /^[A-Za-z]+$/
 /** Re-fetch the fact's own source and compare it with what was stored. Never claims more than it checked. */
 export async function checkFact(fact: ExFact, base: string): Promise<CheckResult> {
   const url = fact.u ?? base
+  if (!url.startsWith('https://data.brreg.no/')) {
+    return { tone: 'info', text: 'This fact comes from the company’s own website. Open the source to check it there.' }
+  }
   let data: unknown
   try {
     data = await fetchLive(url)

@@ -40,6 +40,9 @@ function parseRoute(): Route {
   return { page: 'home' }
 }
 
+/** Set by the submit step only if the site was actually built with JBox. */
+const CREDIT = ' · Built with JBox'
+
 const go = (path: string) => {
   window.location.hash = path
   window.scrollTo({ top: 0 })
@@ -59,6 +62,9 @@ function Shell({ children, wide = false }: { children: React.ReactNode; wide?: b
         </div>
       </header>
       <main className={cn('mx-auto px-4 py-6 sm:py-10', wide ? 'max-w-5xl' : 'max-w-3xl')}>{children}</main>
+      <footer className={cn('mx-auto px-4 pb-6 text-[12px] text-faint', wide ? 'max-w-5xl' : 'max-w-3xl')}>
+        Data: Brønnøysund Register Centre (Brreg), collected by the Signalpost agent{CREDIT}
+      </footer>
     </div>
   )
 }
