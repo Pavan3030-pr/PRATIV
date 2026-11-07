@@ -6,6 +6,7 @@ const links = [
   { label: 'Verification', href: '#verification' },
   { label: 'How it works', href: '#how-it-works' },
   { label: 'Architecture', href: '#architecture' },
+  { label: 'Explore companies', href: '#/explore' },
 ]
 
 export function SiteHeader({ onStart }: { onStart: () => void }) {

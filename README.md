@@ -36,3 +36,7 @@ Tests: `cd agent && python -m unittest -v test_main test_web` (offline, no netwo
 ## 1. Executive Summary & Architecture Overview
 
 SIGNALPOST is a source-first company research application. It retrieves organization identity fields from Norway's Brønnøysund Register Centre (Brreg), stores profile and evidence records, and exposes the agent and audit trail through a compact operations workspace.
+
+## Public explorer (Signalpost website bonus)
+
+Open `/#/explore`: find a company, open it, check each fact against its source, compare two. No login. Data: `python3 scripts/build_explorer_data.py`.
