@@ -41,7 +41,7 @@ function parseRoute(): Route {
 }
 
 /** Set by the submit step only if the site was actually built with JBox. */
-const CREDIT = ' · Built with JBox'
+const CREDIT = ''
 
 const go = (path: string) => {
   window.location.hash = path
