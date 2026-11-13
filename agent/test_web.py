@@ -293,6 +293,44 @@ class JobTests(unittest.TestCase):
         r = run({"https://foo.no": self.home(), "https://foo.no/karriere": careers})
         self.assertEqual([j["title"] for j in r["jobs"]], ["KIWI Stokke søker butikkmedarbeider", "MENY Nøtterøy søker avdelingsleder"])
 
+    def test_jsonld_jobposting_is_published_with_its_date(self):
+        careers = ('<body><script type="application/ld+json">'
+                   '{"@type":"JobPosting","title":"Senior prosjektleder bygg",'
+                   '"url":"https://foo.no/karriere/senior-prosjektleder-bygg","datePosted":"2026-10-05"}'
+                   '</script></body>')
+        r = run({"https://foo.no": self.home(), "https://foo.no/karriere": careers})
+        self.assertEqual([(j["title"], j["url"], j["posted_at"]) for j in r["jobs"]],
+                         [("Senior prosjektleder bygg", "https://foo.no/karriere/senior-prosjektleder-bygg", "2026-10-05")])
+
+    def test_recruitment_service_posting_linked_from_the_careers_page(self):
+        careers = ('<body><article><h3><a href="https://acme.teamtailor.com/jobs/123456-senior-utvikler">Senior utvikler</a></h3></article>'
+                   '<article><h3><a href="https://acme.teamtailor.com/jobs">Ledige stillinger</a></h3></article>'
+                   '<article><h3><a href="https://example.recruitee.com/o/selger">Selger av byggevarer</a></h3></article></body>')
+        r = run({"https://foo.no": self.home(), "https://foo.no/karriere": careers})
+        self.assertEqual([j["url"] for j in r["jobs"]],
+                         ["https://acme.teamtailor.com/jobs/123456-senior-utvikler",
+                          "https://example.recruitee.com/o/selger"])
+        self.assertTrue(all(j["found_on"] == "https://foo.no/karriere" for j in r["jobs"]))
+
+    def test_employer_scoped_job_board_linked_from_the_site(self):
+        home = (f'<body>{FOOTER_OWN}<a href="https://www.jobbnorge.no/search?employer=789#1">Ledige stillinger</a>'
+                '<a href="https://www.finn.no/job/employer/company/569">Jobb hos oss</a></body>')
+        board = ('<body><article><h3><a href="https://www.jobbnorge.no/ledige-stillinger/stilling/12345/butikkmedarbeider">Butikkmedarbeider</a></h3></article>'
+                 '<article><h3><a href="https://www.jobbnorge.no/ledige-stillinger">Alle stillinger</a></h3></article></body>')
+        r = run({"https://foo.no": home, "https://www.jobbnorge.no/search?employer=789": board})
+        self.assertEqual([(j["title"], j["url"]) for j in r["jobs"]],
+                         [("Butikkmedarbeider", "https://www.jobbnorge.no/ledige-stillinger/stilling/12345/butikkmedarbeider")])
+        self.assertEqual(r["jobs"][0]["found_on"], "https://www.jobbnorge.no/search?employer=789")
+
+    def test_sitemap_finds_an_unlinked_careers_page(self):
+        sitemap = ('<?xml version="1.0"?><urlset><url><loc>https://foo.no/karriere/</loc></url>'
+                   '<url><loc>https://foo.no/om-oss</loc></url></urlset>')
+        careers = ('<body><article><h3><a href="/karriere/mekaniker">Mekaniker</a></h3></article></body>')
+        r = run({"https://foo.no": f"<body>{FOOTER_OWN}</body>",
+                 "https://foo.no/sitemap.xml": (200, sitemap, {"Content-Type": "application/xml"}),
+                 "https://foo.no/karriere/": careers})
+        self.assertEqual([j["title"] for j in r["jobs"]], ["Mekaniker"])
+
     def test_careers_words_alone_do_not_create_a_posting(self):
         r = run({"https://foo.no": self.home('<a href="/karriere-i-foo">Les om karriere hos oss</a>')})
         self.assertEqual(r["jobs"], [])

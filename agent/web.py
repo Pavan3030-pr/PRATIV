@@ -18,6 +18,7 @@ Everything else stays empty with a stated reason; nothing is guessed.
 """
 from __future__ import annotations
 
+import html
 import ipaddress
 import json
 import re
@@ -50,12 +51,12 @@ LEGAL_FORMS = {"as", "asa", "ans", "da", "ba", "sa", "ks", "nuf", "enk", "iks", 
 PAGE_HINT = re.compile(r"(kontakt|contact|om-oss|omoss|about|personvern|privacy|vilkar|vilk%c3%a5r|terms|betingelser|impressum|cookie|handelsbetingelser)", re.I)
 NEWS_HINT = re.compile(r"^/(nyheter|nyhet|nytt|news|aktuelt|aktuelle-saker|blogg|blog|presse|pressemeldinger|press|artikler|nyhetsarkiv|siste-nytt)/?$", re.I)
 JOB_HINT = re.compile(
-    r"(karriere|careers?|jobs?|ledige[-_/ ]?stillinger|stilling(er)?|vacancies|"
+    r"(karriere|careers?|\bjobb\w*|\bjobs?|ledige[-_/ ]?stillinger|\bstilling(er)?|vacancies|"
     r"join[-_ ]?us|work[-_ ]?with[-_ ]?us|ledige[-_ ]?jobber)",
     re.I,
 )
 JOB_LABEL = re.compile(
-    r"^(karriere|careers?|jobs?|ledige stillinger|ledige jobber|vacancies|"
+    r"^(karriere|careers?|jobb\w*|ledige stillinger|ledige jobber|vacancies|"
     r"open positions|job openings|join us|work with us)$",
     re.I,
 )
@@ -643,11 +644,77 @@ JOB_TITLE_HINT = re.compile(
     r"\b(stilling|stillinger|s\u00f8ker|s\u00f8knad|soknad|ledig|ledige|vacanc|position|ingeni\u00f8r|utvikler|"
     r"selger|mekaniker|operat\u00f8r|sj\u00e5f\u00f8r|prosjektleder|leder|assistent|medarbeider|l\u00e6rling|trainee|"
     r"praktikant|sommervikar|tilkallingshjelp|konsulent|tekniker|mont\u00f8r|snekker|elektriker|r\u00e5dgiver|"
-    r"spesialist|koordinator|sjef|direkt\u00f8r)\b",
+    r"spesialist|koordinator|sjef|direkt\u00f8r|fagarbeider|h\u00e5ndverker|servit\u00f8r|kokk|renholder|vekter|"
+    r"resepsjonist|sekret\u00e6r|\u00f8konom|regnskapsf\u00f8rer|l\u00e6rer|sykepleier|barnehagel\u00e6rer|butikkmedarbeider|"
+    r"engineer|developer|manager|consultant|analyst|designer|technician|coordinator|director|officer|"
+    r"advisor|accountant|driver|operator|apprentice|receptionist|recruiter|architect|scientist|researcher|controller)\b",
     re.I,
 )
 JOB_NOT_A_POSTING = re.compile(r"^(\u00e5pen s\u00f8knad|apen soknad|open application|send (us )?(an )?application|contact us|kontakt oss)$", re.I)
 NOTICE_PATH = re.compile(r"/(page|tag|tags|category|kategori|author|forfatter|feed|wp-json|sitemap)(/|$)", re.I)
+# Postings that the company links from its own careers page but hosts on a recruitment service.
+# Only a single posting URL matches; list pages and service home pages never do.
+ATS_POSTING = [
+    re.compile(r"^https://[\w.-]+\.teamtailor\.com/jobs/\d+", re.I),
+    re.compile(r"^https://[\w.-]+\.recruitee\.com/o/[^/?#]+/?$", re.I),
+    re.compile(r"^https://[\w.-]+\.webcruiter\.no/(?:[^/?#]+/)+ad/\d+", re.I),
+    re.compile(r"^https://(?:www\.)?jobbnorge\.no/ledige-stillinger/stilling/\d+", re.I),
+    re.compile(r"^https://[\w.-]+\.easycruit\.com/(?:[^/?#]+/)?vacancy/\d+", re.I),
+    re.compile(r"^https://[\w.-]+\.talentech\.com/(?:[^/?#]+/)?job/\d+", re.I),
+    re.compile(r"^https://(?:www\.)?finn\.no/job/ad/\d+", re.I),
+]
+
+
+def is_ats_posting(url: str) -> bool:
+    return any(p.search(url) for p in ATS_POSTING)
+
+
+# Employer-scoped job-board listings a company links to instead of hosting its own list.
+JOB_BOARD_LISTING = [
+    re.compile(r"^https://(?:www\.)?jobbnorge\.no/(?:[a-z]{2}/)?(?:search|ledige-stillinger)(?:/[^?#]*)?\?[^#]*\bemployer=\d+", re.I),
+    re.compile(r"^https://(?:www\.)?finn\.no/job/employer/company/\d+", re.I),
+    re.compile(r"^https://(?:www\.)?finn\.no/job/employer/\d+", re.I),
+]
+JOB_BOARD_POSTING = [
+    re.compile(r"^https://(?:www\.)?jobbnorge\.no/(?:[a-z]{2}/)?ledige-stillinger/stilling/\d+", re.I),
+    re.compile(r"^https://(?:www\.)?finn\.no/job/ad/\d+", re.I),
+]
+
+
+def is_job_board_listing(url: str) -> bool:
+    return any(p.search(url) for p in JOB_BOARD_LISTING)
+
+
+def is_job_board_posting(url: str) -> bool:
+    return any(p.search(url) for p in JOB_BOARD_POSTING)
+
+SITEMAP_MAX = 3
+
+
+def sitemap_urls(home: Page, budget: "WebBudget", logs: List[str]) -> List[str]:
+    """Page URLs from /sitemap.xml (and up to two child sitemaps). Bounded, best-effort, never fails the run."""
+    queue = [urljoin(home.url.rstrip("/") + "/", "sitemap.xml")]
+    seen: set = set()
+    out: List[str] = []
+    fetched = 0
+    while queue and fetched < SITEMAP_MAX and budget.used < budget.limit:
+        current = queue.pop(0)
+        if current in seen:
+            continue
+        seen.add(current)
+        page = fetch(current, budget, logs)
+        if page is None:
+            continue
+        fetched += 1
+        locs = [html.unescape(m) for m in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", page.text, re.I)]
+        if re.search(r"<sitemapindex", page.text, re.I):
+            queue += [u for u in locs if u not in seen][: max(0, SITEMAP_MAX - fetched)]
+        else:
+            out += locs
+    if out:
+        logs.append(f"Website: sitemap listed {len(out)} page URL(s) ({fetched} sitemap request(s)).")
+    return out[:5000]
+
 
 def find_jobs_page(pages: List[Page]) -> Optional[str]:
     """Best same-site careers / vacancies link on any page already fetched from the verified site."""
@@ -692,7 +759,7 @@ def valid_job_title(title: str) -> bool:
 
 
 def jobs_from_html(page: Page, site: str) -> List[Dict[str, Any]]:
-    """Postings from a careers/vacancies listing page of the verified site: a human title and a same-site URL."""
+    """Postings from a careers/vacancies listing page: a human title and a same-site or known-ATS posting URL."""
     out: List[Dict[str, Any]] = []
     seen = set()
     today = datetime.now(timezone.utc).date()
@@ -702,11 +769,12 @@ def jobs_from_html(page: Page, site: str) -> List[Dict[str, Any]]:
         if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
             continue
         url = urljoin(page.url, href.split("#")[0])
-        if not same_site(url, site):
+        local = same_site(url, site)
+        if not local and not is_ats_posting(url):
             continue
         path = urlparse(url).path or "/"
         key = url.rstrip("/").lower()
-        if key == page_key or key in seen or NOTICE_PATH.search(path):
+        if key == page_key or key in seen or (local and NOTICE_PATH.search(path)):
             continue
         if _inside_navigation(a):
             continue
@@ -718,7 +786,7 @@ def jobs_from_html(page: Page, site: str) -> List[Dict[str, Any]]:
         # The title must name a role or a hiring action; careers-page culture/FAQ links never do.
         if not JOB_TITLE_HINT.search(title):
             continue
-        if PAGE_HINT.search(path) or NEWS_HINT.match(path + "/") or PRODUCT_PATH.search(path + "/"):
+        if local and (PAGE_HINT.search(path) or NEWS_HINT.match(path + "/") or PRODUCT_PATH.search(path + "/")):
             continue
         seen.add(key)
         posted = None
@@ -733,8 +801,93 @@ def jobs_from_html(page: Page, site: str) -> List[Dict[str, Any]]:
             "url": url,
             "posted_at": posted,
             "found_on": page.url,
-            "source": "job link on the company's careers page",
+            "source": "link on the company's careers page" if local else "recruitment-service posting linked from the company's careers page",
         })
+        if len(out) >= MAX_JOBS:
+            break
+    return out
+
+
+def jobs_from_jsonld(page: Page, site: str, today: date) -> List[Dict[str, Any]]:
+    """schema.org JobPosting entries: the most reliable machine-readable posting a site can publish."""
+    out: List[Dict[str, Any]] = []
+    for s in page.soup.find_all("script", type=re.compile("ld\\+json", re.I)):
+        try:
+            data = json.loads(s.string or s.get_text() or "null")
+        except ValueError:
+            continue
+        stack = [data]
+        while stack:
+            cur = stack.pop()
+            if isinstance(cur, list):
+                stack += cur
+                continue
+            if not isinstance(cur, dict):
+                continue
+            kinds = cur.get("@type")
+            kinds = kinds if isinstance(kinds, list) else [kinds]
+            if any(k == "JobPosting" for k in kinds):
+                title = cur.get("title") or cur.get("name") or cur.get("headline")
+                raw = cur.get("url") or cur.get("sameAs")
+                d = parse_date(cur.get("datePosted"))
+                if isinstance(title, str) and isinstance(raw, str):
+                    url = urljoin(page.url, raw)
+                    title = _clean_title(title)
+                    if (same_site(url, site) or is_ats_posting(url)) and valid_job_title(title) \
+                            and JOB_TITLE_HINT.search(title):
+                        out.append({
+                            "title": title,
+                            "url": url,
+                            "posted_at": d.isoformat() if valid_publish_date(d, today) else None,
+                            "found_on": page.url,
+                            "source": "JSON-LD JobPosting",
+                        })
+            stack += [v for v in cur.values() if isinstance(v, (dict, list))]
+    return out
+
+
+def find_job_boards(pages: List[Page], limit: int = 2) -> List[str]:
+    """Employer-scoped job-board pages linked from the site, most likely to render first.
+
+    Finn's employer pages are server-rendered; Jobbnorge's search page is a JavaScript shell, so it is only tried
+    as a fallback.
+    """
+    urls: List[str] = []
+    for page in pages:
+        for a in page.soup.find_all("a", href=True):
+            url = html.unescape(a["href"].strip()).split("#")[0]
+            if is_job_board_listing(url) and url not in urls:
+                urls.append(url)
+    urls.sort(key=lambda u: 0 if "finn.no" in u else 1)
+    return urls[:limit]
+
+
+def jobs_from_board(page: Page, board_url: str, today: date) -> List[Dict[str, Any]]:
+    """Postings shown on the employer-scoped board page the company's own careers page links to."""
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for a in page.soup.find_all("a", href=True):
+        url = urljoin(page.url, html.unescape(a["href"].strip()).split("#")[0])
+        if not is_job_board_posting(url):
+            continue
+        key = url.rstrip("/").lower()
+        if key in seen:
+            continue
+        heading = a.find(re.compile("^h[1-4]$")) or a.find_parent(re.compile("^h[1-4]$"))
+        title = _clean_title((heading or a).get_text(" "))
+        if not valid_job_title(title) or not JOB_TITLE_HINT.search(title):
+            continue
+        seen.add(key)
+        posted = None
+        container = a.find_parent(["article", "li", "tr", "div"])
+        if container is not None:
+            for node in container.find_all(["time"], limit=4):
+                d = parse_date(node.get("datetime") or node.get_text(" "))
+                if d and valid_publish_date(d, today):
+                    posted = d.isoformat()
+                    break
+        out.append({"title": title, "url": url, "posted_at": posted, "found_on": board_url,
+                    "source": "employer listing on a job board linked from the company's careers page"})
         if len(out) >= MAX_JOBS:
             break
     return out
@@ -814,6 +967,16 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
         logs.append(f"Website: {len(rejected)} social link(s) discarded (group, agency, theme, share or personal): "
                     + "; ".join(rejected[:6]) + ("..." if len(rejected) > 6 else "") + ".")
 
+    sitemap_cache: List[str] = []
+    sitemap_done = False
+
+    def sitemap_pages() -> List[str]:
+        nonlocal sitemap_done, sitemap_cache
+        if not sitemap_done:
+            sitemap_cache = sitemap_urls(home, budget, logs)
+            sitemap_done = True
+        return sitemap_cache
+
     news: List[Dict[str, Any]] = []
     feed_url = find_feed(home)
     if feed_url:
@@ -822,6 +985,11 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
             news += news_from_feed(feed, site_url, today)
     if len(news) < 3:
         news_url = find_news_page(home)
+        if not news_url:
+            for cand in sitemap_pages():
+                if same_site(cand, site_url) and NEWS_HINT.match(urlparse(cand).path + "/"):
+                    news_url = cand
+                    break
         if news_url:
             news_page = fetch(news_url, budget, logs)
             if news_page:
@@ -838,6 +1006,11 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
     jobs: List[Dict[str, Any]] = []
     jobs_url = find_jobs_page(pages)
     if not jobs_url:
+        for cand in sitemap_pages():
+            if same_site(cand, site_url) and JOB_HINT.search(urlparse(cand).path or ""):
+                jobs_url = cand
+                break
+    if not jobs_url:
         # Common careers paths, tried only after the site itself offered no link (still the company's own host).
         for guess in ("karriere", "karriere-i-virksomheten", "jobb", "ledige-stillinger", "careers"):
             if budget.used >= budget.limit:
@@ -847,10 +1020,23 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
             if probe is not None and JOB_HINT.search(urlparse(probe.url).path or ""):
                 jobs_url = probe.url
                 break
+    jobs_page = None
     if jobs_url and budget.used < budget.limit:
         jobs_page = fetch(jobs_url, budget, logs)
         if jobs_page:
             jobs += jobs_from_html(jobs_page, site_url)
+            jobs += jobs_from_jsonld(jobs_page, site_url, today)
+    for board_url in find_job_boards(pages + ([jobs_page] if jobs_page else [])):
+        if budget.used >= budget.limit or len(jobs) >= 3:
+            break
+        board = fetch(board_url, budget, logs)
+        if board is None:
+            continue
+        found = jobs_from_board(board, board_url, today)
+        if found:
+            jobs += found
+            break
+    jobs += jobs_from_jsonld(home, site_url, today)
     jobs = dedupe_jobs(jobs)
     result["jobs"] = jobs
     for i, it in enumerate(jobs, 1):
