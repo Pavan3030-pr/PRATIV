@@ -33,6 +33,8 @@ Per company (`./run.sh`, or `POST /api/v1/crawl/{orgnr}`): legal name, organisat
 
 **CI:** every push runs the agent tests, the Spring Boot tests on Java 21, the frontend lint and production build, and the explorer data checks.
 
+**Security and operations:** the agent API sends an `X-Request-ID` on every response, returns JSON errors with that id, enforces a per-client request budget (`SIGNALPOST_RATE_LIMIT_PER_MIN`, default 300; health probes exempt) and only allows browser calls from origins listed in `SIGNALPOST_ALLOWED_ORIGINS` (empty by default). Server-to-server callers are unaffected. Both containers run as non-root users, the agent image has a health check, and every required setting is documented in [.env.example](.env.example).
+
 **Update detection:** `delta_sync_hash` covers the 7 core registry fields, identical to `db/profiles_1000.json`, so a stored profile and a live crawl are directly comparable. `content_hash` covers the full profile. Each result carries `update.status` (`new`, `unchanged`, `changed`) and the exact `changed_fields` (old and new values). A secondary source being temporarily unreachable is reported as unavailable and never counted as a change. `./run.sh --all` refreshes every seeded company and writes `db/profiles_enriched.json`.
 
 Tests: `cd agent && python -m unittest -v test_main test_web` (offline, no network needed).

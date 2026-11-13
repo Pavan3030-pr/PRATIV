@@ -3,8 +3,8 @@
   "succeeded": 119,
   "failed": 0,
   "failures": [],
-  "elapsed_seconds": 180.8,
-  "requests_used": 866,
+  "elapsed_seconds": 193.8,
+  "requests_used": 924,
   "request_cap": 1900,
   "average_fields_found": 11.97,
   "expected_fields": 17,
@@ -28,8 +28,8 @@
     "net_profit": 29.4
   },
   "update_status_counts": {
-    "unchanged": 110,
-    "new": 9
+    "unchanged": 117,
+    "changed": 2
   },
   "website_status_counts": {
     "no_website": 5,

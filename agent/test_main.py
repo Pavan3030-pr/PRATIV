@@ -273,6 +273,26 @@ class ApiEndpointTests(Base, unittest.IsolatedAsyncioTestCase):
         self.assertEqual([r.get("status") for r in body["results"][1:]], [400, 400])
         self.assertEqual((await self.client.post("/api/v1/crawl-batch", json={"company_numbers": []})).status_code, 400)
 
+    async def test_request_id_and_readiness(self):
+        response = await self.client.get("/ready")
+        self.assertEqual(response.json()["status"], "READY")
+        self.assertTrue(response.headers.get("X-Request-ID"))
+        response = await self.client.get("/health", headers={"X-Request-ID": "trace-123"})
+        self.assertEqual(response.headers["X-Request-ID"], "trace-123")
+
+    async def test_rate_limit_returns_429_with_a_json_error(self):
+        main._hits.clear()
+        p = patch.object(main, "RATE_LIMIT_PER_MIN", 1)
+        p.start()
+        self.addCleanup(p.stop)
+        self.addCleanup(main._hits.clear)
+        self.assertEqual((await self.client.get("/health")).status_code, 200)   # health probes are exempt
+        first = await self.client.post("/api/v1/crawl/invalid123")
+        second = await self.client.post("/api/v1/crawl/invalid123")
+        self.assertEqual(first.status_code, 400)
+        self.assertEqual(second.status_code, 429)
+        self.assertIn("request_id", second.json())
+
     async def test_registry_not_found_and_timeout_status_codes(self):
         with patch("core.requests.get", side_effect=router({f"{core.ENHETER}/{N}": (404, {})})):
             self.assertEqual((await self.client.post(f"/api/v1/crawl/{N}")).status_code, 404)
