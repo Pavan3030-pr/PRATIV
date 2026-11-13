@@ -1,9 +1,10 @@
-"""Website enrichment for the Signalpost agent: website ownership check, social links, news.
+"""Website enrichment for the Signalpost agent: website ownership check, social links, news, jobs.
 
 Rules (each one answers an audit finding):
-  1. The registry's website is only used for social links and news after the site itself shows this
-     company's organisation number or its exact registered name. A parent-group or brand site fails
-     that check, is reported as not verified, and nothing is taken from it.
+  1. The registry's website is only used for social links, news and jobs after the site itself shows
+     this company's organisation number (preferred) or its exact registered name with no group/sister
+     signals. A parent-group or brand site fails that check, is reported as not verified, and nothing
+     is taken from it.
   2. A social account is published only if its handle matches the company (its legal name or its own
      verified domain). Footer links of the parent group, the web agency, the website theme, share
      buttons and personal profiles never match and are discarded.
@@ -11,6 +12,8 @@ Rules (each one answers an audit finding):
      like "See more news"), not a product/service page, and a publish date taken from a publish
      field (time[datetime], datePublished, RSS pubDate, Atom published). "modified", "updated",
      dateModified, lastBuildDate and Atom <updated> are never used as a publish date.
+  4. Job postings are taken only from a verified own site (careers / ledige stillinger links), with
+     a human title and same-site URL. Nothing is guessed.
 Everything else stays empty with a stated reason; nothing is guessed.
 """
 from __future__ import annotations
@@ -41,10 +44,26 @@ MAX_BYTES = 1_500_000
 MAX_REDIRECTS = 4
 MAX_WEB_REQUESTS = 10          # per company, retries included: keeps 100 companies far inside the daily limit
 MAX_NEWS = 5
+MAX_JOBS = 8
 
 LEGAL_FORMS = {"as", "asa", "ans", "da", "ba", "sa", "ks", "nuf", "enk", "iks", "sf", "stift", "ltd", "ab", "oy", "gmbh"}
 PAGE_HINT = re.compile(r"(kontakt|contact|om-oss|omoss|about|personvern|privacy|vilkar|vilk%c3%a5r|terms|betingelser|impressum|cookie|handelsbetingelser)", re.I)
 NEWS_HINT = re.compile(r"^/(nyheter|nyhet|nytt|news|aktuelt|aktuelle-saker|blogg|blog|presse|pressemeldinger|press|artikler|nyhetsarkiv|siste-nytt)/?$", re.I)
+JOB_HINT = re.compile(
+    r"(karriere|careers?|jobs?|ledige[-_/ ]?stillinger|stilling(er)?|vacancies|"
+    r"join[-_ ]?us|work[-_ ]?with[-_ ]?us|ledige[-_ ]?jobber)",
+    re.I,
+)
+JOB_LABEL = re.compile(
+    r"^(karriere|careers?|jobs?|ledige stillinger|ledige jobber|vacancies|"
+    r"open positions|job openings|join us|work with us)$",
+    re.I,
+)
+JOB_MENU = re.compile(
+    r"^(see all|se alle|vis alle|more jobs|flere stillinger|all jobs|alle stillinger|ledige stillinger|"
+    r"se alle jobber|see all jobs|ledige jobber|open positions|vacancies|careers?|karriere|jobs?)$",
+    re.I,
+)
 PRODUCT_PATH = re.compile(r"/(produkt|produkter|product|products|shop|butikk|nettbutikk|handlekurv|cart|tjeneste|tjenester|service|services|"
                           r"category|kategori|tag|tags|author|forfatter|kontakt|contact|om-oss|about|login|search|sok|page)(/|$)", re.I)
 MENU_LABEL = re.compile(r"^(see|view|read|show|vis|se|les|last|load|flere|more|alle|all|go to|g[åa] til)?\s*"
@@ -251,14 +270,56 @@ def name_pattern(name: str) -> Optional["re.Pattern[str]"]:
     return re.compile(r"(?<!\w)" + r"[\s.,/\-&]*".join(re.escape(t) for t in tokens) + r"(?!\w)", re.I)
 
 
+GENERIC_NAME_TOKENS = {"norge", "norsk", "norske", "nordic", "nordisk", "group", "gruppe", "gruppen", "holding",
+                      "konsern", "sameie", "sameiet", "borettslag", "borettslaget", "forening", "foreningen", "lag",
+                      "eiendom", "eiendommen", "drift", "service", "services", "selskap", "selskapet", "company",
+                      "international", "avdeling", "division", "nord", "sor", "ost", "vest"}
+# A group or sister-company page that merely mentions the legal name. Deliberately generic: no company names.
+GROUP_SIGNALS = re.compile(
+    r"\b(konsern|morselskap|datterselskap|s\u00f8sterselskap|sosterselskap|sister\s+compan|parent\s+compan|"
+    r"part\s+of\s+the\s+[\w\-]+\s+group|group\s+of\s+companies|our\s+companies|v\u00e5re\s+selskaper)\b",
+    re.I,
+)
+
+
+def domain_matches_name(host: str, name: str) -> bool:
+    """Does the site's own host look like this company (foo.no for Foo Norge AS, acmebygg.no for Acme Bygg AS)?
+
+    A registry value can point at the parent group or a sister company (rekonstrukt.no or obos.no for a company that
+    merely belongs to that group). Tying every published fact to the company's own name or organisation number is the
+    rule, so a site whose domain has nothing to do with the name is never accepted, even if the name appears on it.
+    """
+    raw = (urlparse(host).hostname or "") if "//" in host else host
+    labels = [fold(p) for p in raw.lower().split(".")]
+    labels = [l for l in labels if len(l) >= 3]
+    if not labels:
+        return False
+    for token in re.split(r"\s+", name.strip()):
+        t = fold(token)
+        if len(t) < 3 or t in GENERIC_NAME_TOKENS or t in LEGAL_FORMS:
+            continue
+        for label in labels:
+            if t == label or (len(t) >= 4 and label.startswith(t)) or (len(label) >= 4 and t.startswith(label)) \
+                    or (len(t) >= 4 and t in label):
+                return True
+    return False
+
+
 def verify_ownership(page: Page, number: str, name: str) -> Optional[str]:
+    """True only when the host is this company's own and the page proves it by org number or exact legal name."""
     text = _page_text(page)
+    if not domain_matches_name(urlparse(page.url).hostname or "", name):
+        return None
     if org_number_pattern(number).search(text):
         return "organisation_number"
     pat = name_pattern(name)
-    if pat and pat.search(text):
-        return "exact_legal_name"
-    return None
+    if not pat or not pat.search(text):
+        return None
+    if GROUP_SIGNALS.search(text):
+        return None
+    tokens = re.findall(r"\w+", name.casefold())
+    core = [t for t in tokens if t not in LEGAL_FORMS]
+    return "exact_legal_name" if "".join(core) else None
 
 
 def candidate_pages(page: Page, limit: int = 3) -> List[str]:
@@ -575,19 +636,133 @@ def dedupe_news(items: List[Dict[str, Any]], today: date) -> List[Dict[str, Any]
     return out[:MAX_NEWS]
 
 
+# --------------------------------------------------------------------------- 4. jobs
+# A posting title names a role or the act of hiring. Generic words such as "jobb" are deliberately absent:
+# careers landing pages use them for culture/FAQ sections ("Balanse mellom jobb og fritid"), not for postings.
+JOB_TITLE_HINT = re.compile(
+    r"\b(stilling|stillinger|s\u00f8ker|s\u00f8knad|soknad|ledig|ledige|vacanc|position|ingeni\u00f8r|utvikler|"
+    r"selger|mekaniker|operat\u00f8r|sj\u00e5f\u00f8r|prosjektleder|leder|assistent|medarbeider|l\u00e6rling|trainee|"
+    r"praktikant|sommervikar|tilkallingshjelp|konsulent|tekniker|mont\u00f8r|snekker|elektriker|r\u00e5dgiver|"
+    r"spesialist|koordinator|sjef|direkt\u00f8r)\b",
+    re.I,
+)
+JOB_NOT_A_POSTING = re.compile(r"^(\u00e5pen s\u00f8knad|apen soknad|open application|send (us )?(an )?application|contact us|kontakt oss)$", re.I)
+NOTICE_PATH = re.compile(r"/(page|tag|tags|category|kategori|author|forfatter|feed|wp-json|sitemap)(/|$)", re.I)
+
+def find_jobs_page(pages: List[Page]) -> Optional[str]:
+    """Best same-site careers / vacancies link on any page already fetched from the verified site."""
+    best = None
+    for page in pages:
+        for a in page.soup.find_all("a", href=True):
+            url = urljoin(page.url, a["href"].split("#")[0].split("?")[0])
+            if not same_site(url, page.url):
+                continue
+            path = urlparse(url).path or "/"
+            if JOB_HINT.search(path):
+                return url
+            label = re.sub(r"\s+", " ", a.get_text(" ")).strip()
+            shallow = path.rstrip("/").count("/") <= 3
+            if best is None and shallow and (JOB_HINT.search("/" + path.rstrip("/").rsplit("/", 1)[-1] + "/") or JOB_LABEL.match(label)):
+                best = url
+    return best
+
+
+def _inside_navigation(a: Any) -> bool:
+    """Menu, breadcrumb, header and footer links are navigation, never a job posting."""
+    cur = a
+    for _ in range(8):
+        cur = cur.parent
+        if cur is None:
+            return False
+        if getattr(cur, "name", None) in ("nav", "header", "footer"):
+            return True
+        marks = " ".join(cur.get("class") or []) + " " + (cur.get("id") or "")
+        if re.search(r"(menu|navbar|nav-|breadcrumb|site-header|site-footer|footer|sidebar|pagination)", marks, re.I):
+            return True
+    return False
+
+
+def valid_job_title(title: str) -> bool:
+    t = re.sub(r"\s+", " ", title).strip()
+    if len(t) < 8 or (len(t.split()) < 2 and not JOB_TITLE_HINT.search(t)):
+        return False
+    if JOB_MENU.match(t) or MENU_LABEL.match(t) or JOB_NOT_A_POSTING.match(t):
+        return False
+    return True
+
+
+def jobs_from_html(page: Page, site: str) -> List[Dict[str, Any]]:
+    """Postings from a careers/vacancies listing page of the verified site: a human title and a same-site URL."""
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    today = datetime.now(timezone.utc).date()
+    page_key = page.url.rstrip("/").lower()
+    for a in page.soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        url = urljoin(page.url, href.split("#")[0])
+        if not same_site(url, site):
+            continue
+        path = urlparse(url).path or "/"
+        key = url.rstrip("/").lower()
+        if key == page_key or key in seen or NOTICE_PATH.search(path):
+            continue
+        if _inside_navigation(a):
+            continue
+        heading = a.find(re.compile("^h[1-4]$")) or a.find_parent(re.compile("^h[1-4]$"))
+        title = _clean_title((heading or a).get_text(" "))
+        if not valid_job_title(title):
+            continue
+        container = a.find_parent(["article", "li", "tr", "div"])
+        # The title must name a role or a hiring action; careers-page culture/FAQ links never do.
+        if not JOB_TITLE_HINT.search(title):
+            continue
+        if PAGE_HINT.search(path) or NEWS_HINT.match(path + "/") or PRODUCT_PATH.search(path + "/"):
+            continue
+        seen.add(key)
+        posted = None
+        if container is not None:
+            for node in container.find_all(["time"], limit=4):
+                d = parse_date(node.get("datetime") or node.get_text(" "))
+                if d and valid_publish_date(d, today):
+                    posted = d.isoformat()
+                    break
+        out.append({
+            "title": title,
+            "url": url,
+            "posted_at": posted,
+            "found_on": page.url,
+            "source": "job link on the company's careers page",
+        })
+        if len(out) >= MAX_JOBS:
+            break
+    return out
+
+
+def dedupe_jobs(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen, out = set(), []
+    for it in items:
+        key = it["url"].rstrip("/").lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(it)
+    return out[:MAX_JOBS]
+
+
 # --------------------------------------------------------------------------- orchestration
 def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: Callable[[], None],
            logs: List[str], today: Optional[date] = None) -> Dict[str, Any]:
-    """Returns {'website': {...}, 'social_links': [...], 'news': [...], 'items': [...evidence rows...]}."""
+    """Returns {'website': {...}, 'social_links': [...], 'news': [...], 'jobs': [...], 'items': [...]}."""
     today = today or datetime.now(timezone.utc).date()
     url = normalize_url(registry_website)
     result: Dict[str, Any] = {"website": {"registry_url": registry_website if isinstance(registry_website, str) else None,
                                           "url": None, "status": "no_website", "verified": False, "verified_by": None,
                                           "pages_checked": []},
-                              "social_links": [], "news": [], "items": []}
+                              "social_links": [], "news": [], "jobs": [], "items": []}
     site = result["website"]
     if not url:
-        logs.append("Website: the registry lists no usable website; social links and news are not searched.")
+        logs.append("Website: the registry lists no usable website; social links, news and jobs are not searched.")
         return result
     budget = WebBudget(sess, throttle)
     home = fetch(url, budget, logs)
@@ -595,7 +770,7 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
         home = fetch("http://" + url[len("https://"):], budget, logs)
     if home is None:
         site.update(status="unreachable", url=url)
-        logs.append(f"Website: {url} could not be read, so ownership could not be verified; social links and news left empty.")
+        logs.append(f"Website: {url} could not be read, so ownership could not be verified; social links, news and jobs left empty.")
         return result
     site["pages_checked"].append(home.url)
     site_url = home.url
@@ -640,7 +815,6 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
                     + "; ".join(rejected[:6]) + ("..." if len(rejected) > 6 else "") + ".")
 
     news: List[Dict[str, Any]] = []
-    news_page = None
     feed_url = find_feed(home)
     if feed_url:
         feed = fetch(feed_url, budget, logs)
@@ -660,5 +834,41 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
                                 "url": it["url"], "path": it["source"],
                                 "why": f"Dated post on the verified company site; publish date {it['published_at']} from {it['source']} "
                                        f"(modified/updated dates are never used); found on {it['found_on']}."})
-    logs.append(f"Website: {len(social)} social account(s) and {len(news)} dated news item(s) published; {budget.used} website request(s).")
+
+    jobs: List[Dict[str, Any]] = []
+    jobs_url = find_jobs_page(pages)
+    if not jobs_url:
+        # Common careers paths, tried only after the site itself offered no link (still the company's own host).
+        for guess in ("karriere", "karriere-i-virksomheten", "jobb", "ledige-stillinger", "careers"):
+            if budget.used >= budget.limit:
+                break
+            cand = urljoin(site_url.rstrip("/") + "/", guess)
+            probe = fetch(cand, budget, logs)
+            if probe is not None and JOB_HINT.search(urlparse(probe.url).path or ""):
+                jobs_url = probe.url
+                break
+    if jobs_url and budget.used < budget.limit:
+        jobs_page = fetch(jobs_url, budget, logs)
+        if jobs_page:
+            jobs += jobs_from_html(jobs_page, site_url)
+    jobs = dedupe_jobs(jobs)
+    result["jobs"] = jobs
+    for i, it in enumerate(jobs, 1):
+        when = it.get("posted_at") or "open / undated"
+        result["items"].append({
+            "key": f"job_item_{i}",
+            "value": f"{when} {it['title']}",
+            "snippet": f"{when}: {it['title']}",
+            "url": it["url"],
+            "path": it["source"],
+            "why": (
+                f"Job posting linked from the verified company site; "
+                f"title and URL taken from the company's own page ({it['found_on']})."
+            ),
+        })
+
+    logs.append(
+        f"Website: {len(social)} social account(s), {len(news)} dated news item(s), "
+        f"{len(jobs)} job posting(s); {budget.used} website request(s)."
+    )
     return result

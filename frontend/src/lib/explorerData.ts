@@ -33,6 +33,7 @@ export type ExDoc = {
   } | null
   web: { url?: string | null; verified: boolean; by?: string | null } | null
   news: { title: string; url: string; at: string }[]
+  jobs: { title: string; url: string; at?: string | null }[]
   social: { platform: string; url: string }[]
 }
 

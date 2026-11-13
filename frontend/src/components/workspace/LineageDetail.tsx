@@ -313,8 +313,22 @@ export function LineageDetail({ company, crawl }: LineageDetailProps) {
                   </li>
                 ))}
               </ul>
-            ) : crawl.website.verified ? (
-              <p className="text-[12px] text-faint">No real, dated news post was found on the verified site.</p>
+            ) : crawl.website.verified && !crawl.jobs?.length ? (
+              <p className="text-[12px] text-faint">No real, dated news post or open job posting was found on the verified site.</p>
+            ) : null}
+            {crawl.jobs?.length ? (
+              <ul className="divide-y divide-line border-t border-line" aria-label="Job postings on the company site">
+                {crawl.jobs.filter((j) => safeHref(j.url)).map((j) => (
+                  <li key={j.url} className="py-2.5">
+                    <a href={j.url} target="_blank" rel="noreferrer" className="text-[13px] font-medium text-accent hover:opacity-75">
+                      {j.title}
+                    </a>
+                    <span className="mono-data mt-0.5 block text-[11px] text-faint">
+                      {j.posted_at ? `Posted ${j.posted_at}` : 'Open posting'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             ) : null}
           </div>
         </section>

@@ -46,7 +46,7 @@ REGISTRY_KEYS = ["organisasjonsnummer", "navn", "organisasjonsform_kode", "stift
 SOURCE_GROUPS = {"roles": ["general_manager", "chair", "board_member_count"],
                  "subunits": ["subunit_count", "subunit_sample"],
                  "accounts": ["financial_revenue", "operating_result", "net_profit"],
-                 "website": ["social_links", "news", "website_verified_by"]}
+                 "website": ["website", "social_links", "news", "jobs", "website_verified_by"]}
 EXPECTED = ["official_legal_name", "organisation_form", "registered_address", "incorporation_date",
             "industry", "employees", "website", "vat_registered", "institutional_sector",
             "company_status", "general_manager", "chair", "board_member_count", "subunit_count",
@@ -560,16 +560,21 @@ def crawl(company_number: str, store: Optional[SnapshotStore] = None,
     web_items: List[Dict[str, Any]] = []
     social_links: List[Dict[str, Any]] = []
     news: List[Dict[str, Any]] = []
+    jobs: List[Dict[str, Any]] = []
     web_why = None
     if _text(registry_site) and enrich_web and web is not None:
+        # The registry website is a claim like any other: it is published only after the site itself
+        # proves it belongs to this company (name or organisation number). A parent, sister or brand
+        # site is reported in missing_fields instead of being asserted as this company's website.
+        items[:] = [i for i in items if i["key"] != "website"]
         try:
             web_out = web.enrich(n, name, registry_site, sess, _throttle, logs)
         except CrawlError as exc:           # run-wide request budget used up
             web_why = f"Website not read ({exc.detail})"
-            logs.append(f"Website: {web_why}; social links and news left empty.")
+            logs.append(f"Website: {web_why}; social links, news and jobs left empty.")
         except Exception as exc:            # a malformed page must never cost the registry profile
             web_why = f"Website check failed ({exc.__class__.__name__})"
-            logs.append(f"Website: {web_why}; social links and news left empty.")
+            logs.append(f"Website: {web_why}; social links, news and jobs left empty.")
     elif _text(registry_site) and not enrich_web:
         web_why = "Website not checked in this run (time budget)"
     if web_out is not None:
@@ -578,32 +583,37 @@ def crawl(company_number: str, store: Optional[SnapshotStore] = None,
         if site["status"] == "verified":
             web_items = web_out["items"]
             items.append(web_items.pop(0))                   # the website fact itself belongs to the profile
-            social_links, news = web_out["social_links"], web_out["news"]
+            social_links = web_out["social_links"]
+            news = web_out["news"]
+            jobs = web_out.get("jobs") or []
             if not social_links:
                 missing["social_links"] = "No social account linked on the verified site has a handle matching this company's name or domain."
             if not news:
                 missing["news"] = "No real, dated news post (publish date, own page) was found on the verified site."
+            if not jobs:
+                missing["jobs"] = "No open or dated job posting was found on the verified company site."
         elif site["status"] == "not_verified":
             missing["website"] = site["reason"]
-            missing["social_links"] = missing["news"] = "Registry website is not verified as this company's own (possible parent or brand site)."
+            missing["social_links"] = missing["news"] = missing["jobs"] = "Registry website is not verified as this company's own (possible parent, sister or brand site)."
         elif site["status"] == "unreachable":
-            last = ((store.get(n) if store else None) or {}).get("facts") or {}
-            items.append({"key": "website", "value": last.get("website") or normalize_registry_site(registry_site), "snippet": f"Website: {registry_site.strip()} (registry value; site unreachable, ownership not verified)",
-                          "url": src_main, "path": "hjemmeside", "why": base_why.format(p="hjemmeside") + " The site could not be reached to verify it."})
-            missing["social_links"] = missing["news"] = "Website unreachable this run."
+            missing["website"] = (f"The registry lists '{str(registry_site).strip()}', but the site could not be reached, so "
+                                  "ownership is unproven and it is not published as this company's website.")
+            missing["social_links"] = missing["news"] = missing["jobs"] = "Website unreachable this run."
             stale += SOURCE_GROUPS["website"]
             unavailable.append("website")
         else:
             missing["website"] = "The registry's website value is not a usable web address."
-            missing["social_links"] = missing["news"] = "No usable website."
+            missing["social_links"] = missing["news"] = missing["jobs"] = "No usable website."
     elif web_why:
-        missing["social_links"] = missing["news"] = web_why
+        missing["website"] = f"The registry lists '{str(registry_site).strip()}', but ownership could not be verified ({web_why})."
+        missing["social_links"] = missing["news"] = missing["jobs"] = web_why
         if enrich_web:
             stale += SOURCE_GROUPS["website"]
             unavailable.append("website")
     else:
         missing.setdefault("social_links", "No website registered, so no social links were searched.")
         missing.setdefault("news", "No website registered, so no news was searched.")
+        missing.setdefault("jobs", "No website registered, so no jobs were searched.")
     evidences = [{"target_metric_key": i["key"], "extracted_text_snippet": i["snippet"], "source_url_link": i["url"],
                   "crawl_timestamp": ts, "explanation_chain": i["why"], "field_path": i["path"],
                   "value_sha256": sha(i["value"])} for i in items + web_items]
@@ -612,6 +622,8 @@ def crawl(company_number: str, store: Optional[SnapshotStore] = None,
         facts["social_links"] = {s["platform"]: s["url"] for s in social_links}
     if news:
         facts["news"] = [{k: it[k] for k in ("title", "url", "published_at")} for it in news]
+    if jobs:
+        facts["jobs"] = [{"title": j["title"], "url": j["url"], "posted_at": j.get("posted_at")} for j in jobs]
     if web_out and web_out["website"]["verified"]:
         facts["website_verified_by"] = web_out["website"]["verified_by"]
     if sample:
@@ -644,7 +656,7 @@ def crawl(company_number: str, store: Optional[SnapshotStore] = None,
         "website": (web_out or {}).get("website") or ({"registry_url": None, "status": "no_website", "verified": False, "reason": "The registry lists no website for this company."}
                     if not _text(registry_site) else
                     {"registry_url": registry_site, "status": "not_checked", "verified": False, "reason": web_why or "Website check was skipped."}),
-        "social_links": social_links, "news": news,
+        "social_links": social_links, "news": news, "jobs": jobs,
     }
 
 
@@ -653,33 +665,53 @@ def normalize_registry_site(raw: Any) -> str:
 
 
 def build_summary(n: str, f: Dict[str, Any], fin: Optional[Dict[str, Any]], ts: str) -> str:
-    s = f"{f['official_legal_name']} (org. nr {n})"
-    s += f" is registered as {f['organisation_form']}" if "organisation_form" in f else " is a registered Norwegian organisation"
-    if "incorporation_date" in f:
-        s += f", founded {f['incorporation_date']}"
-    if "registered_address" in f:
-        s += f", at {f['registered_address']}"
-    parts = [s + "."]
+    name = f.get("official_legal_name") or f"Org. {n}"
+    parts: List[str] = []
+
+    if fin and "financial_revenue" in f:
+        parts.append(
+            f"{name} reported revenue of {f['financial_revenue'].split(' (')[0]} "
+            f"for the period ending {fin.get('period_end')} "
+            f"(Brønnøysund Regnskapsregisteret, retrieved {ts})."
+        )
+    elif "jobs" in f and f["jobs"]:
+        j0 = f["jobs"][0]
+        parts.append(
+            f"{name} has an open role “{j0['title']}” on its own site "
+            f"({j0.get('url') or 'company careers page'}, retrieved {ts})."
+        )
+    elif "employees" in f and "industry" in f:
+        parts.append(
+            f"{name} is a {f['industry']} company with {f['employees']} registered employees "
+            f"(Enhetsregisteret, retrieved {ts})."
+        )
+    elif "industry" in f:
+        parts.append(
+            f"{name} operates in {f['industry']} "
+            f"(Enhetsregisteret, retrieved {ts})."
+        )
+    else:
+        parts.append(
+            f"{name} is a registered Norwegian organisation "
+            f"(Enhetsregisteret, retrieved {ts})."
+        )
+
     if "company_status" in f:
         parts.append(f"Status: {f['company_status']}.")
-    if "industry" in f:
-        parts.append(f"Industry: {f['industry']}.")
-    if "employees" in f:
-        parts.append(f"Registered employees: {f['employees']}.")
-    lead = [x for x in (f"general manager {f['general_manager']}" if "general_manager" in f else None,
-                        f"board chair {f['chair']}" if "chair" in f else None) if x]
+    lead = []
+    if "general_manager" in f:
+        lead.append(f"GM {f['general_manager']}")
+    if "chair" in f:
+        lead.append(f"chair {f['chair']}")
     if lead:
-        parts.append("Led by " + " and ".join(lead) + ".")
-    if "subunit_count" in f:
-        parts.append(f"Registered sub-units: {f['subunit_count']}.")
-    if "social_links" in f:
-        parts.append("Verified social accounts: " + ", ".join(f["social_links"]) + ".")
-    if "news" in f:
-        parts.append(f"Latest dated news: {f['news'][0]['published_at']} \u2013 {f['news'][0]['title']}.")
-    if fin and "financial_revenue" in f:
-        parts.append(f"Latest annual accounts ({fin.get('account_type')}, period ending {fin.get('period_end')}): revenue {f['financial_revenue'].split(' (')[0]}"
-                     + (f", net result {f['net_profit'].split(' (')[0]}" if "net_profit" in f else "") + ".")
-    else:
-        parts.append("No annual accounts figures are published for this company; none are estimated.")
-    parts.append(f"All facts come from the Brønnøysund Register Centre, retrieved {ts}, each with its own source link.")
+        parts.append("Leadership: " + ", ".join(lead) + ".")
+    if "news" in f and f["news"]:
+        parts.append(
+            f"Latest dated news: {f['news'][0]['published_at']} – {f['news'][0]['title']}."
+        )
+    if "jobs" in f and f["jobs"] and not (fin and "financial_revenue" in f):
+        parts.append(f"Open positions on the verified company site: {len(f['jobs'])}.")
+    if not (fin and "financial_revenue" in f):
+        parts.append("No annual-accounts revenue figure is published for this company; none are estimated.")
+    parts.append("Every claim has its own source URL and retrieval timestamp.")
     return " ".join(parts)

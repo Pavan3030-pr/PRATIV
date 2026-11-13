@@ -45,6 +45,7 @@ export type AgentCrawl = {
   website?: WebsiteCheck
   social_links?: SocialLink[]
   news?: NewsItem[]
+  jobs?: JobItem[]
   financials?: Financials | null
   missing_fields?: Record<string, string>
 }
@@ -62,6 +63,8 @@ export type WebsiteCheck = {
 export type SocialLink = { platform: string; url: string; handle: string; found_on?: string; matched?: string }
 
 export type NewsItem = { title: string; url: string; published_at: string; source?: string }
+
+export type JobItem = { title: string; url: string; posted_at?: string | null; source?: string }
 
 export type FinancialYear = {
   period_start?: string | null

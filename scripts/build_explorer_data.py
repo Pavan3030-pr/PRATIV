@@ -75,7 +75,7 @@ def main():
             key = ev.get("target_metric_key", "")
             url = ev.get("source_url_link") or base
             facts.append({
-                "k": key, "l": LABELS.get(key, key.replace("_", " ").capitalize()),
+                "k": key, "l": LABELS.get(key) or ("Job posting" if key.startswith("job_item_") else key.replace("_", " ").capitalize()),
                 "v": display(key, ev, profile), "t": ev.get("crawl_timestamp", ""),
                 "p": ev.get("field_path", ""), "s": ev.get("value_sha256", ""),
                 "e": ev.get("explanation_chain", ""), **({"u": url} if url != base else {}),
@@ -83,6 +83,7 @@ def main():
         facts.sort(key=lambda f: ORDER.index(f["k"]) if f["k"] in ORDER else 99)
         fin = r.get("financials") or {}
         news = [{"title": n.get("title"), "url": n.get("url"), "at": n.get("published_at")} for n in (r.get("news") or [])]
+        jobs = [{"title": j.get("title"), "url": j.get("url"), "at": j.get("posted_at")} for j in (r.get("jobs") or [])]
         social = [{"platform": s.get("platform"), "url": s.get("url")} for s in (r.get("social_links") or [])]
         web = r.get("website") or {}
         upd = r.get("update") or {}
@@ -94,7 +95,7 @@ def main():
             "missing": r.get("missing_fields") or {}, "facts": facts,
             "fin": {k: fin.get(k) for k in ("period_start", "period_end", "currency", "account_type", "source_url", "revenue", "operating_result", "net_result")} if fin else None,
             "web": {"url": web.get("url"), "verified": bool(web.get("verified")), "by": web.get("verified_by")} if web else None,
-            "news": news, "social": social,
+            "news": news, "jobs": jobs, "social": social,
         }
         (OUT / "c" / f"{org}.json").write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         addr = profile.get("registered_address", "")

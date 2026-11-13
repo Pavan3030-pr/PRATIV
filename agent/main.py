@@ -45,6 +45,7 @@ class CrawlResponse(BaseModel):
     website: Dict[str, Any] = {}
     social_links: List[Dict[str, Any]] = []
     news: List[Dict[str, Any]] = []
+    jobs: List[Dict[str, Any]] = []
 
 
 class BatchRequest(BaseModel):

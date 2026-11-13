@@ -417,7 +417,7 @@ function CompanyPage({ org, picked, toggle }: { org: string; picked: string[]; t
         </>
       ) : null}
 
-      {d.news.length > 0 || d.social.length > 0 ? (
+      {d.news.length > 0 || d.social.length > 0 || (d.jobs ?? []).length > 0 ? (
         <>
           <h2 className="mt-8 mb-2 text-[13px] font-semibold tracking-wide text-muted uppercase">Web presence</h2>
           <ul className="grid gap-2 text-[14px]">
@@ -426,6 +426,20 @@ function CompanyPage({ org, picked, toggle }: { org: string; picked: string[]; t
             ))}
             {d.news.map((n) => (
               <li key={n.url}><a className="text-accent hover:underline" href={n.url} target="_blank" rel="noopener noreferrer">{n.title}</a> <span className="text-muted">· {formatDate(n.at)}</span></li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+
+      {(d.jobs ?? []).length > 0 ? (
+        <>
+          <h2 className="mt-8 mb-2 text-[13px] font-semibold tracking-wide text-muted uppercase">Open roles on the company site</h2>
+          <ul className="grid gap-2 text-[14px]">
+            {(d.jobs ?? []).map((j) => (
+              <li key={j.url}>
+                <a className="text-accent hover:underline" href={j.url} target="_blank" rel="noopener noreferrer">{j.title}</a>
+                {j.at ? <span className="text-muted"> · posted {formatDate(j.at)}</span> : <span className="text-muted"> · open posting</span>}
+              </li>
             ))}
           </ul>
         </>

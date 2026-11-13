@@ -256,7 +256,11 @@ class ApiEndpointTests(Base, unittest.IsolatedAsyncioTestCase):
         body = response.json()
         self.assertEqual(body["official_legal_name"], "DNB BANK ASA")
         self.assertEqual(body["update"]["status"], "new")
-        self.assertEqual(body["coverage"]["found"], 17)
+        # The registry lists www.dnb.no, but this offline run cannot read it, so ownership stays unproven
+        # and the website is reported in missing_fields instead of being asserted as a fact.
+        self.assertEqual(body["coverage"]["found"], 16)
+        self.assertNotIn("website", body["profile"])
+        self.assertIn("could not be reached", body["missing_fields"]["website"])
         self.assertEqual(len(body["delta_sync_hash"]), 64)
 
     async def test_batch_endpoint_returns_one_entry_per_number_in_order(self):

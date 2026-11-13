@@ -81,6 +81,24 @@ class OwnershipTests(unittest.TestCase):
         r = run({"https://foo.no": "<p>Foo Norge Holding AS 923 609 016</p>"})
         self.assertEqual(r["website"]["status"], "not_verified")
 
+    def test_registry_site_of_a_parent_or_sister_company_is_never_published(self):
+        # TREEMBALLASJE AS is a subsidiary in the Emineo group; rekonstrukt.no is a sister company.
+        r = run({"https://rekonstrukt.no": "<body>Treemballasje AS er en del av konsernet</body>"},
+                website="https://rekonstrukt.no", name="TREEMBALLASJE AS", number="981242947")
+        self.assertEqual((r["website"]["status"], r["items"]), ("not_verified", []))
+        # SAMEIET EGNERKVARTALET has a broken registry value (ww.obos.no) pointing at the OBOS group.
+        r = run({"https://obos.no": "<body>Sameiet Egnerkvartalet</body>"},
+                website="https://obos.no", name="SAMEIET EGNERKVARTALET", number="922901457")
+        self.assertEqual((r["website"]["status"], r["items"]), ("not_verified", []))
+
+    def test_domain_must_match_the_company_name(self):
+        self.assertTrue(web.domain_matches_name("foo.no", "FOO NORGE AS"))
+        self.assertTrue(web.domain_matches_name("www.acme-bygg.no", "ACME BYGG AS"))
+        self.assertTrue(web.domain_matches_name("bjorkelangen.speiding.no", "1. BJORKELANGEN SPEIDERGRUPPE"))
+        self.assertFalse(web.domain_matches_name("rekonstrukt.no", "TREEMBALLASJE AS"))
+        self.assertFalse(web.domain_matches_name("obos.no", "SAMEIET EGNERKVARTALET"))
+        self.assertFalse(web.domain_matches_name("emineo.no", "TREEMBALLASJE AS"))
+
     def test_private_hosts_are_never_fetched_and_registry_noise_is_normalised(self):
         logs = []
         with patch("web.requests.get") as get:
@@ -237,6 +255,72 @@ class SubdomainAndDomainHandleTests(unittest.TestCase):
         self.assertEqual(set(web.own_domain_keys("www.2con.se")), {"2con", "2conse"})
 
 
+class JobTests(unittest.TestCase):
+    def home(self, extra=""):
+        return f'<body>{FOOTER_OWN}<nav><a href="/karriere">Karriere</a></nav>{extra}</body>'
+
+    def test_postings_on_the_companys_own_careers_page(self):
+        careers = ('<body><nav><a href="/om-oss">Om oss</a></nav>'
+                   '<article><h3><a href="/karriere/ingenior-salg">Ingeniør salg</a></h3><time datetime="2026-10-01">1.10</time></article>'
+                   '<article><h3><a href="/karriere/apen-soknad">Åpen søknad</a></h3></article>'
+                   '<article><h3><a href="https://facebook.com/foonorge">Facebook</a></h3></article>'
+                   '<a href="/karriere"><h3>Karriere</h3></a></body>')
+        r = run({"https://foo.no": self.home(), "https://foo.no/karriere": careers})
+        self.assertEqual([(j["title"], j["url"], j["posted_at"]) for j in r["jobs"]],
+                         [("Ingeniør salg", "https://foo.no/karriere/ingenior-salg", "2026-10-01")])
+        self.assertEqual([e["key"] for e in r["items"] if e["key"].startswith("job")], ["job_item_1"])
+
+    def test_navigation_and_generic_pages_are_not_job_postings(self):
+        careers = ('<body><nav><article><h3><a href="/om-oss/historikk">Vår historie</a></h3></article></nav>'
+                   '<footer><a href="/personvern">Personvern og cookies</a></footer>'
+                   '<article><h3><a href="/produkter/stor-hammer">Stor hammer Pro 2000</a></h3></article></body>')
+        r = run({"https://foo.no": self.home(), "https://foo.no/karriere": careers})
+        self.assertEqual(r["jobs"], [])
+
+    def test_careers_landing_culture_and_faq_cards_are_not_postings(self):
+        # Seen on obos.no/om-obos/jobb-i-obos: culture and FAQ cards under a jobs section.
+        careers = ('<body><article><h3><a href="/om-obos/jobb-i-obos/en-inkluderende-kultur">Best sammen</a></h3></article>'
+                   '<article><h3><a href="/om-obos/jobb-i-obos/balanse-mellom-jobb-og-fritid">Balanse mellom jobb og fritid</a></h3></article>'
+                   '<article><h3><a href="/om-obos/jobb-i-obos/sporsmal-og-svar-om-rekruttering">Ofte stilte spørsmål</a></h3></article>'
+                   '<article><h3><a href="/om-obos/jobb-i-obos/summer-intern-i-obos">Les mer om summer internship</a></h3></article></body>')
+        r = run({"https://foo.no": self.home(), "https://foo.no/karriere": careers})
+        self.assertEqual(r["jobs"], [])
+
+    def test_listing_with_advert_links_is_a_posting(self):
+        # Seen on norgesgruppen.no/karriere/ledige-stillinger/?advertId=...
+        careers = ('<body><article><h3><a href="/karriere/ledige-stillinger/?advertId=123">KIWI Stokke søker butikkmedarbeider</a></h3></article>'
+                   '<article><h3><a href="/karriere/ledige-stillinger/?advertId=456">MENY Nøtterøy søker avdelingsleder</a></h3></article></body>')
+        r = run({"https://foo.no": self.home(), "https://foo.no/karriere": careers})
+        self.assertEqual([j["title"] for j in r["jobs"]], ["KIWI Stokke søker butikkmedarbeider", "MENY Nøtterøy søker avdelingsleder"])
+
+    def test_careers_words_alone_do_not_create_a_posting(self):
+        r = run({"https://foo.no": self.home('<a href="/karriere-i-foo">Les om karriere hos oss</a>')})
+        self.assertEqual(r["jobs"], [])
+
+    def test_job_titles_reject_menu_labels(self):
+        for label in ("Karriere", "Ledige stillinger", "Se alle jobber", "Åpen søknad"):
+            self.assertFalse(web.valid_job_title(label), label)
+        self.assertTrue(web.valid_job_title("Prosjektleder bygg"))
+
+
+class SummaryTests(unittest.TestCase):
+    TS = "2026-11-13T10:00:00Z"
+
+    def test_revenue_leads_with_its_source(self):
+        s = core.build_summary("984851006", {"official_legal_name": "DNB BANK ASA", "financial_revenue": "NOK 1 000 (FY ending 2025-12-31)",
+                                              "company_status": "active"}, {"period_end": "2025-12-31"}, self.TS)
+        self.assertTrue(s.startswith("DNB BANK ASA reported revenue of NOK 1 000 for the period ending 2025-12-31 "
+                                     "(Brønnøysund Regnskapsregisteret"))
+
+    def test_job_opening_is_the_first_fact_when_no_accounts_exist(self):
+        s = core.build_summary("981242947", {"official_legal_name": "TREEMBALLASJE AS",
+                                              "jobs": [{"title": "Industrimekanikar", "url": "https://example.no/jobb/1", "posted_at": None}]}, None, self.TS)
+        self.assertIn("open role", s)
+        self.assertIn("https://example.no/jobb/1", s)
+        self.assertIn("retrieved " + self.TS, s)
+        self.assertNotIn("registered as", s)          # no re-listing of registry fields
+
+
 class CoreIntegrationTests(unittest.TestCase):
     def setUp(self):
         for target, value in (("BACKOFF", (0, 0)), ("MIN_INTERVAL", 0)):
@@ -269,7 +353,7 @@ class CoreIntegrationTests(unittest.TestCase):
         self.assertNotIn("social_links", r["profile"])
         self.assertEqual(r["news"], [])
 
-    def test_unreachable_site_keeps_registry_value_and_is_not_a_change(self):
+    def test_unreachable_site_publishes_no_website_claim_and_is_not_a_change(self):
         store = core.SnapshotStore(None)
         home = FOOTER_OWN + '<a href="https://facebook.com/foonorge">fb</a>'
         routes = full_routes(**{f"{core.ENHETER}/{N}": (200, dict(ENHET, navn=NAME, hjemmeside="foo.no"))})
@@ -281,6 +365,8 @@ class CoreIntegrationTests(unittest.TestCase):
             with patch("requests.get", side_effect=dispatch(routes, down)):
                 second = core.crawl(N, store=store, budget=core.RequestBudget(60))
         self.assertEqual(second["website"]["status"], "unreachable")
+        self.assertNotIn("website", second["profile"])               # unproven ownership is never asserted
+        self.assertIn("could not be reached", second["missing_fields"]["website"])
         self.assertNotIn("social_links", second["profile"])
         self.assertEqual(second["update"]["status"], "unchanged")
         self.assertEqual(second["update"]["changed_fields"], [])

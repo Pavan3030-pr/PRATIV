@@ -1,52 +1,43 @@
 {
-  "companies": 53,
-  "succeeded": 51,
-  "failed": 2,
-  "failures": [
-    {
-      "company_number": "923609017",
-      "status": 400,
-      "error": "Invalid company number '923609017'. Must be 9 digits with a valid Modulus 11 check digit."
-    },
-    {
-      "company_number": "000000000",
-      "status": 404,
-      "error": "No Brreg company record exists for this organization number."
-    }
-  ],
-  "elapsed_seconds": 46.6,
-  "requests_used": 213,
+  "companies": 119,
+  "succeeded": 119,
+  "failed": 0,
+  "failures": [],
+  "elapsed_seconds": 180.8,
+  "requests_used": 866,
   "request_cap": 1900,
-  "average_fields_found": 11.59,
+  "average_fields_found": 11.97,
   "expected_fields": 17,
   "field_coverage_percent": {
     "official_legal_name": 100.0,
     "organisation_form": 100.0,
-    "registered_address": 100.0,
-    "incorporation_date": 86.3,
-    "industry": 96.1,
-    "employees": 5.9,
-    "website": 7.8,
-    "vat_registered": 100.0,
-    "institutional_sector": 92.2,
+    "registered_address": 98.3,
+    "incorporation_date": 84.0,
+    "industry": 94.1,
+    "employees": 10.9,
+    "website": 30.3,
+    "vat_registered": 98.3,
+    "institutional_sector": 94.1,
     "company_status": 100.0,
-    "general_manager": 31.4,
-    "chair": 82.4,
-    "board_member_count": 82.4,
+    "general_manager": 50.4,
+    "chair": 73.9,
+    "board_member_count": 74.8,
     "subunit_count": 100.0,
-    "financial_revenue": 19.6,
-    "operating_result": 27.5,
-    "net_profit": 27.5
+    "financial_revenue": 28.6,
+    "operating_result": 29.4,
+    "net_profit": 29.4
   },
   "update_status_counts": {
-    "unchanged": 51
+    "unchanged": 110,
+    "new": 9
   },
   "website_status_counts": {
-    "no_website": 47,
-    "unreachable": 1,
-    "verified": 3
+    "no_website": 5,
+    "not_verified": 45,
+    "unreachable": 33,
+    "verified": 36
   },
-  "companies_with_verified_social": 1,
-  "companies_with_dated_news": 1,
-  "wrong_company_checks_all_passed": 51
+  "companies_with_verified_social": 17,
+  "companies_with_dated_news": 2,
+  "wrong_company_checks_all_passed": 119
 }

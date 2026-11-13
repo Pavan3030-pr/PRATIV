@@ -20,7 +20,7 @@ for (const row of index) {
   if (d.n !== row[0]) wrongCompany++
   for (const f of d.facts) {
     const u = f.u ?? d.base
-    const web = /^(website|social_|news_)/.test(f.k)   // verified facts from the company's own site
+    const web = /^(website|social_|news_|job_)/.test(f.k)   // verified facts from the company's own site
     if (web ? !u.startsWith('https://') : !(u.startsWith('https://data.brreg.no/') && u.includes(row[0]))) badUrl++
     if (!f.t) badDate++
     if (!f.p) badPath++
