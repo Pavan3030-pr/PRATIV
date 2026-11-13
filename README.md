@@ -13,7 +13,17 @@
 - **Live demo without a backend:** https://prativ.vercel.app. Use "Enter Evaluator Workspace"; if `localhost:8080` is unreachable, lookups query Brreg directly from the browser and compute the SHA-256 hash with `crypto.subtle`.
 
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the design, guarantees and known limits. Check any run with `python3 scripts/validate_output.py numbers.txt results.jsonl`. HTTP batch: `POST /api/v1/crawl-batch` with `{"company_numbers": [...]}`.
+## Local development
+
+```bash
+make install   # .venv + Python and frontend dependencies
+make dev       # agent API on :8000 and explorer on :5173/#/explore
+make test      # agent, Spring Boot and frontend unit tests + explorer data checks
+make e2e       # Playwright smoke of the production build
+make data      # rebuild frontend/public/explore from committed results
+```
+
+`make docker` starts the full stack (PostgreSQL, Spring Boot, agent, UI); copy [.env.example](.env.example) to `.env` and fill in the OAuth and JWT values first. See [ARCHITECTURE.md](ARCHITECTURE.md) for the design, guarantees and known limits. Check any run with `python3 scripts/validate_output.py numbers.txt results.jsonl`. HTTP batch: `POST /api/v1/crawl-batch` with `{"company_numbers": [...]}`.
 
 ## Website, social, news and jobs rules (audit fixes)
 

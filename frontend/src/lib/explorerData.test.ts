@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { checkFact, loadDoc, loadIndex, money, sourceLabel, type ExFact } from './explorerData'
+import { checkFact, factsCsv, loadDoc, loadIndex, money, sourceLabel, type ExDoc, type ExFact } from './explorerData'
 
 const base = 'https://data.brreg.no/enhetsregisteret/api/enheter/984851006'
 
@@ -67,6 +67,31 @@ describe('checkFact', () => {
     const result = await checkFact(fact({ u: `${base}/down`, k: 'official_legal_name', p: 'navn' }), base)
     expect(result.tone).toBe('info')
     expect(result.text).toContain('Could not reach the source')
+  })
+})
+
+describe('factsCsv', () => {
+  it('writes every fact with its source and quotes unsafe cells', () => {
+    const doc = {
+      base: 'https://data.brreg.no/enhetsregisteret/api/enheter/984851006',
+      facts: [
+        {
+          k: 'official_legal_name',
+          l: 'Legal name',
+          v: 'ACME, "NORD" AS',
+          t: '2026-11-13T10:00:00Z',
+          p: 'navn',
+          s: 'abc123',
+          e: 'Read from the registry.\nSecond line.',
+          u: 'https://data.brreg.no/enhetsregisteret/api/enheter/984851006',
+        },
+      ],
+    } as unknown as ExDoc
+    const csv = factsCsv(doc)
+    expect(csv.split('\n')[0]).toBe('field,label,value,source_url,source_field,retrieved_at,value_sha256,explanation')
+    expect(csv).toContain('"ACME, ""NORD"" AS"')
+    expect(csv).toContain('"Read from the registry.\nSecond line."')
+    expect(csv.endsWith('\n')).toBe(true)
   })
 })
 

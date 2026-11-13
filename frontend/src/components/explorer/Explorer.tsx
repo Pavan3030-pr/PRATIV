@@ -3,6 +3,8 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  Copy,
+  Download,
   ExternalLink,
   LoaderCircle,
   Plus,
@@ -16,6 +18,8 @@ import { formatDate } from '../../lib/api'
 import { cn } from '../../lib/cn'
 import {
   checkFact,
+  downloadText,
+  factsCsv,
   loadDoc,
   loadIndex,
   money,
@@ -343,11 +347,22 @@ function FactRow({ fact, base }: { fact: ExFact; base: string }) {
 
 function CompanyPage({ org, picked, toggle }: { org: string; picked: string[]; toggle: (o: string) => void }) {
   const state = useDoc(org)
+  const [copied, setCopied] = useState(false)
   if (!state) return <Loading />
   if (state.error || !state.doc) return <NotFound message={state.error} />
   const d = state.doc
   const active = (d.facts.find((f) => f.k === 'company_status')?.v ?? '').toLowerCase().startsWith('active')
   const retrieved = d.facts[0]?.t
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
+    } catch {
+      // Clipboard access can be blocked; the URL is still in the address bar.
+    }
+  }
 
   return (
     <>
@@ -375,12 +390,34 @@ function CompanyPage({ org, picked, toggle }: { org: string; picked: string[]; t
         >
           Official record <ExternalLink size={13} aria-hidden="true" />
         </a>
+        <button
+          type="button"
+          onClick={copyLink}
+          className="inline-flex h-11 items-center gap-1.5 rounded-control border border-line-strong bg-paper px-3 text-[12.5px] font-medium text-graphite hover:bg-sunken"
+        >
+          {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+          {copied ? 'Link copied' : 'Copy link'}
+        </button>
+        <button
+          type="button"
+          onClick={() => downloadText(`${d.n}-${d.name.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}.csv`, factsCsv(d), 'text/csv;charset=utf-8')}
+          className="inline-flex h-11 items-center gap-1.5 rounded-control border border-line-strong bg-paper px-3 text-[12.5px] font-medium text-graphite hover:bg-sunken"
+        >
+          <Download size={13} aria-hidden="true" /> CSV
+        </button>
+        <button
+          type="button"
+          onClick={() => downloadText(`${d.n}-profile.json`, JSON.stringify(d, null, 2), 'application/json;charset=utf-8')}
+          className="inline-flex h-11 items-center gap-1.5 rounded-control border border-line-strong bg-paper px-3 text-[12.5px] font-medium text-graphite hover:bg-sunken"
+        >
+          <Download size={13} aria-hidden="true" /> JSON
+        </button>
       </div>
 
       {d.summary ? <p className="mt-5 rounded-panel border border-line bg-paper p-4 text-[14px] leading-relaxed text-graphite">{d.summary}</p> : null}
 
       <h2 className="mt-8 mb-2 text-[13px] font-semibold tracking-wide text-muted uppercase">Facts and their sources</h2>
-      <ul className="overflow-hidden rounded-panel border border-line bg-paper">
+      <ul className="overflow-hidden rounded-panel border border-line bg-paper" aria-label="Facts and their sources">
         {d.facts.map((f, i) => (
           <FactRow key={`${f.k}-${i}`} fact={f} base={d.base} />
         ))}

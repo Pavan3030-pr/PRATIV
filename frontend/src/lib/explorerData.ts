@@ -131,6 +131,34 @@ export async function checkFact(fact: ExFact, base: string): Promise<CheckResult
   }
 }
 
+const CSV_FIELDS = ['field', 'label', 'value', 'source_url', 'source_field', 'retrieved_at', 'value_sha256', 'explanation'] as const
+
+function csvCell(value: string) {
+  return /[",\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value
+}
+
+/** Every published fact with its source, as a spreadsheet a reviewer can audit offline. */
+export function factsCsv(doc: ExDoc): string {
+  const rows = [CSV_FIELDS.join(',')]
+  for (const fact of doc.facts) {
+    rows.push(
+      [fact.k, fact.l, fact.v, fact.u ?? doc.base, fact.p, fact.t, fact.s, fact.e].map((cell) => csvCell(cell ?? '')).join(','),
+    )
+  }
+  return `${rows.join('\n')}\n`
+}
+
+export function downloadText(fileName: string, text: string, mime: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: mime }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.append(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
 export function money(value: number | null | undefined, currency?: string | null) {
   if (value === null || value === undefined) return '—'
   return `${currency ?? 'NOK'} ${new Intl.NumberFormat('en-GB').format(value)}`
