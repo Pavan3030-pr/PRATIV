@@ -47,10 +47,18 @@ const docs = new Map<string, Promise<ExDoc>>()
 const live = new Map<string, Promise<unknown>>()
 
 export function loadIndex() {
-  indexPromise ??= fetch('/explore/index.json').then((r) => {
-    if (!r.ok) throw new Error('Company index unavailable')
-    return r.json() as Promise<IndexRow[]>
-  })
+  if (!indexPromise) {
+    indexPromise = fetch('/explore/index.json')
+      .then((r) => {
+        if (!r.ok) throw new Error('Company index unavailable')
+        return r.json() as Promise<IndexRow[]>
+      })
+      // A transient failure must not poison the cache: the next attempt tries again.
+      .catch((error: unknown) => {
+        indexPromise = null
+        throw error
+      })
+  }
   return indexPromise
 }
 
