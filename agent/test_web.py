@@ -331,6 +331,45 @@ class JobTests(unittest.TestCase):
                          [("Butikkmedarbeider", "https://www.jobbnorge.no/ledige-stillinger/stilling/12345/butikkmedarbeider")])
         self.assertEqual(r["jobs"][0]["found_on"], "https://www.jobbnorge.no/search?employer=789")
 
+    def test_group_careers_page_on_the_companys_other_host_publishes_only_the_norwegian_unit(self):
+        # Seen on telenor.no/om/jobbitelenor -> telenor.com/career/open-positions: one shared page for the whole group,
+        # each card naming the hiring company. Only the unit in this register is attributed to this company.
+        home = (f'<body>{FOOTER_OWN}<a href="https://foo.com/career/open-positions/">Ledige stillinger</a></body>')
+        group = ('<body>'
+                 '<a class="position-link" href="/career/open-positions/job-search-article.page?id=1">'
+                 '<span class="company">Foo Norge</span><h3 class="position-title">Platform Engineer – Core Automation</h3>'
+                 '<span class="location">Oslo, Norway</span></a>'
+                 '<a class="position-link" href="/career/open-positions/job-search-article.page?id=2">'
+                 '<span class="company">Foo Danmark</span><h3 class="position-title">Customer Service Advisor</h3>'
+                 '<span class="location">Copenhagen, Denmark</span></a>'
+                 '<a class="position-link" href="/career/open-positions/job-search-article.page?id=3">'
+                 '<span class="company">Foo Sverige</span><h3 class="position-title">Technical Specialist - Temporary Position</h3>'
+                 '<span class="location">Stockholm, Sweden</span></a></body>')
+        r = run({"https://foo.no": home, "https://foo.com/career/open-positions/": group},
+                website="https://foo.no", name=NAME)
+        self.assertEqual([(j["title"], j["url"]) for j in r["jobs"]],
+                         [("Platform Engineer – Core Automation",
+                           "https://foo.com/career/open-positions/job-search-article.page?id=1")])
+        self.assertIn("Foo Norge", r["jobs"][0]["source"])
+
+    def test_one_vacancy_on_two_boards_is_one_row(self):
+        # Seen on Byggmakker: its FINN ad and its Jobbnorge ad carry the same title.
+        items = [
+            {"title": "Byggmakker Handel søker regional salgssjef for Agder", "url": "https://www.finn.no/job/ad/480865313", "source": "finn"},
+            {"title": "Byggmakker Handel søker regional salgssjef for Agder", "url": "https://www.jobbnorge.no/ledige-stillinger/stilling/311739", "source": "jobbnorge"},
+            {"title": "Deltidsekspeditør", "url": "https://www.jobbnorge.no/ledige-stillinger/stilling/310739", "source": "jobbnorge"},
+            {"title": "Deltidsekspeditør", "url": "https://www.jobbnorge.no/ledige-stillinger/stilling/311617", "source": "jobbnorge"},
+        ]
+        self.assertEqual([j["url"] for j in web.dedupe_jobs(items)],
+                         ["https://www.finn.no/job/ad/480865313",
+                          "https://www.jobbnorge.no/ledige-stillinger/stilling/310739",
+                          "https://www.jobbnorge.no/ledige-stillinger/stilling/311617"])
+
+    def test_a_careers_page_on_an_unrelated_host_is_not_read(self):
+        home = f'<body>{FOOTER_OWN}<a href="https://www.acmeagency.com/career/">Ledige stillinger</a></body>'
+        r = run({"https://foo.no": home}, website="https://foo.no", name=NAME)
+        self.assertEqual(r["jobs"], [])
+
     def test_sitemap_finds_an_unlinked_careers_page(self):
         sitemap = ('<?xml version="1.0"?><urlset><url><loc>https://foo.no/karriere/</loc></url>'
                    '<url><loc>https://foo.no/om-oss</loc></url></urlset>')
@@ -522,8 +561,47 @@ class JobbnorgeTests(unittest.TestCase):
                 web.enrich(N, NAME, "https://foo.no", Sess(), lambda: None, [], TODAY)
         self.assertEqual(len(calls), 1)
 
-    def test_a_publish_date_outside_the_window_is_not_asserted(self):
-        api = feed(jb(1, "Foo Norge", 789, "Selger butikk", date="31.12.1999"))
+    def test_role_titles_are_told_apart_from_menu_labels(self):
+        self.assertTrue(web.valid_job_title("Regnskapskonsulent"))
+        self.assertTrue(web.valid_job_title("Butikkmedarbeider"))
+        self.assertFalse(web.valid_job_title("Karriere"))
+        self.assertFalse(web.valid_job_title("Kontakt oss"))
+        self.assertFalse(web.valid_job_title("Åpen søknad."))
+
+    def test_an_open_application_with_a_location_is_still_a_notice(self):
+        api = feed(jb(1, "Foo Norge", 789, "Open søknad produksjon Ørsta", date="10.10.2026"))
+        home = self.home('<a href="https://www.jobbnorge.no/search?employer=789">Stillinger</a>')
+        r = run({"https://foo.no": home, API: (200, api, {"Content-Type": "application/json"})})
+        self.assertEqual(r["jobs"], [])
+
+    def test_career_guide_articles_are_not_postings(self):
+        self.assertFalse(web.valid_job_title("Veien til en karriere i DSB – fra søknad til ny jobb"))
+        self.assertFalse(web.valid_job_title("Slik søker du jobb hos oss"))
+
+    def test_board_decoration_is_removed_from_the_role_title(self):
+        self.assertEqual(web.clean_job_title("Applications Engineer Location: Kongsberg Discovery, Houston, TX read more"),
+                         "Applications Engineer")
+        api = feed(jb(1, "Foo Norge", 789, "Applications Engineer Location: Houston read more", date="10.10.2026"))
+        home = self.home('<a href="https://www.jobbnorge.no/search?employer=789">Stillinger</a>')
+        r = run({"https://foo.no": home, API: (200, api, {"Content-Type": "application/json"})})
+        self.assertEqual([j["title"] for j in r["jobs"]], ["Applications Engineer"])
+
+    def test_open_application_notices_are_not_postings(self):
+        api = feed(jb(1, "Foo Norge", 789, "Åpen søknad.", date="14.10.2026"),
+                   jb(2, "Foo Norge", 789, "Open søknad", date="14.10.2026"))
+        home = self.home('<a href="https://www.jobbnorge.no/search?employer=789">Stillinger</a>')
+        r = run({"https://foo.no": home, API: (200, api, {"Content-Type": "application/json"})})
+        self.assertEqual(r["jobs"], [])
+
+    def test_a_posting_older_than_a_year_is_not_published(self):
+        api = feed(jb(1, "Foo Norge", 789, "Operativ teknisk leder", date="21.02.2022"),
+                   jb(2, "Foo Norge", 789, "Regnskapskonsulent", date="10.10.2026"))
+        home = self.home('<a href="https://www.jobbnorge.no/search?employer=789">Stillinger</a>')
+        r = run({"https://foo.no": home, API: (200, api, {"Content-Type": "application/json"})})
+        self.assertEqual([j["title"] for j in r["jobs"]], ["Regnskapskonsulent"])
+
+    def test_a_publish_date_that_cannot_be_parsed_keeps_no_date(self):
+        api = feed(jb(1, "Foo Norge", 789, "Selger butikk", date="ikke en dato"))
         home = self.home('<a href="https://www.jobbnorge.no/search?employer=789">Stillinger</a>')
         r = run({"https://foo.no": home, API: (200, api, {"Content-Type": "application/json"})})
         self.assertEqual([(j["title"], j["posted_at"]) for j in r["jobs"]], [("Selger butikk", None)])

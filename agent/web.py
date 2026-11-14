@@ -719,7 +719,14 @@ JOB_TITLE_HINT = re.compile(
     r"advisor|accountant|driver|operator|apprentice|receptionist|recruiter|architect|scientist|researcher|controller)\b",
     re.I,
 )
-JOB_NOT_A_POSTING = re.compile(r"^(\u00e5pen s\u00f8knad|apen soknad|open application|send (us )?(an )?application|contact us|kontakt oss)$", re.I)
+# A notice or a careers article, not a vacancy. Matching on the prefix matters: boards append the location,
+# so "Open søknad produksjon Ørsta" must be rejected just like "Åpen søknad".
+JOB_NOT_A_POSTING = re.compile(
+    r"^((\u00e5pen|apen|open)\s+(s\u00f8knad|soknad|application)|spontan(s\u00f8knad|soknad)?|"
+    r"send (us )?(an )?application|contact us|kontakt oss)\b",
+    re.I,
+)
+JOB_ARTICLE = re.compile(r"^(veien til|slik (blir|f\u00e5r|s\u00f8ker|er)|hva er|alt du|les mer|mer om|om \u00e5)\b", re.I)
 NOTICE_PATH = re.compile(r"/(page|tag|tags|category|kategori|author|forfatter|feed|wp-json|sitemap)(/|$)", re.I)
 # Postings that the company links from its own careers page but hosts on a recruitment service.
 # Only a single posting URL matches; list pages and service home pages never do.
@@ -818,16 +825,50 @@ def _inside_navigation(a: Any) -> bool:
     return False
 
 
+def clean_job_title(title: str) -> str:
+    """Remove board decoration that is not part of the role: an inline location and a trailing CTA."""
+    t = re.sub(r"\s+", " ", title).strip()
+    t = re.split(r"\s+Location\s*:", t, maxsplit=1, flags=re.I)[0]
+    t = re.sub(r"[\s,–-]+(read more|les mer|se stilling|view job|apply now|æ søk)\.?$", "", t, flags=re.I)
+    return t.strip(" -–|")
+
+
 def valid_job_title(title: str) -> bool:
     t = re.sub(r"\s+", " ", title).strip()
-    if len(t) < 8 or (len(t.split()) < 2 and not JOB_TITLE_HINT.search(t)):
+    if JOB_ARTICLE.match(t):
         return False
-    if JOB_MENU.match(t) or MENU_LABEL.match(t) or JOB_NOT_A_POSTING.match(t):
+    words = t.split()
+    # Single Norwegian role compounds are common ("Regnskapskonsulent"); a long single word is a title,
+    # a short one ("Karriere", "Kontakt") is a menu label and is rejected below or by length.
+    if len(t) < 8 or (len(words) < 2 and not JOB_TITLE_HINT.search(t) and len(t) < 12):
+        return False
+    # Trailing punctuation ("Åpen søknad.") must not smuggle a no-vacancy notice past the rule.
+    bare = re.sub(r"[\s.!?…:–-]+$", "", t)
+    if JOB_MENU.match(t) or MENU_LABEL.match(t) or JOB_NOT_A_POSTING.match(t) or JOB_NOT_A_POSTING.match(bare):
         return False
     return True
 
 
-def jobs_from_html(page: Page, site: str) -> List[Dict[str, Any]]:
+# A group careers page spans the whole group, so a card must name this register's country before its vacancy is
+# attributed to a Norwegian company. Foreign group units are read as another employer, not this one.
+NORWAY_MARKER = re.compile(r"\b(norge|norway|norsk)\b", re.I)
+FOREIGN_MARKER = re.compile(
+    r"\b(sverige|sweden|danmark|denmark|suomi|finland|asia|united kingdom|ireland|poland|polska|tyskland|"
+    r"germany|nederland|netherlands|usa|united states|canada|brasil|brazil|india|singapore|malaysia|thailand|"
+    r"bangladesh|pakistan|myanmar|hungary|ungarn|romania|estonia|latvia|lithuania|serbia|bulgaria|greece|spain|"
+    r"italy|france|belgium|austria|switzerland|japan|china|korea|taiwan|vietnam|turkey|ukraine|czech|slovakia|"
+    r"slovenia|croatia|portugal|mexico|chile|colombia|peru|argentina|south africa)\b",
+    re.I,
+)
+
+
+def _employer_label(a: Any) -> str:
+    """The hiring company a group careers card names, when the card marks it ("Telenor Norge")."""
+    node = a.find(class_=re.compile(r"(compan|employer|organi[sz]ation)", re.I))
+    return re.sub(r"\s+", " ", node.get_text(" ")).strip() if node is not None else ""
+
+
+def jobs_from_html(page: Page, site: str, norway_only: bool = False) -> List[Dict[str, Any]]:
     """Postings from a careers/vacancies listing page: a human title and a same-site or known-ATS posting URL."""
     out: List[Dict[str, Any]] = []
     seen = set()
@@ -848,9 +889,14 @@ def jobs_from_html(page: Page, site: str) -> List[Dict[str, Any]]:
         if _inside_navigation(a):
             continue
         heading = a.find(re.compile("^h[1-4]$")) or a.find_parent(re.compile("^h[1-4]$"))
-        title = _clean_title((heading or a).get_text(" "))
+        title = clean_job_title(_clean_title((heading or a).get_text(" ")))
         if not valid_job_title(title):
             continue
+        label = _employer_label(a) if norway_only else ""
+        if norway_only:
+            card = label or re.sub(r"\s+", " ", a.get_text(" ")).strip()
+            if not NORWAY_MARKER.search(card) or FOREIGN_MARKER.search(card):
+                continue
         container = a.find_parent(["article", "li", "tr", "div"])
         # The title must name a role or a hiring action; careers-page culture/FAQ links never do.
         if not JOB_TITLE_HINT.search(title):
@@ -870,11 +916,41 @@ def jobs_from_html(page: Page, site: str) -> List[Dict[str, Any]]:
             "url": url,
             "posted_at": posted,
             "found_on": page.url,
-            "source": "link on the company's careers page" if local else "recruitment-service posting linked from the company's careers page",
+            "source": (f"posting by {label} on the group's shared careers page" if label else
+                       "posting for this company's country on the group's shared careers page") if norway_only else
+                      ("link on the company's careers page" if local else
+                       "recruitment-service posting linked from the company's careers page"),
         })
         if len(out) >= MAX_JOBS:
             break
     return out
+
+
+GROUP_JOBS_HINT = re.compile(r"(karriere|careers?|/jobs?/|ledige|vacanc|open-positions|vacant-positions|stillinger|jobbit)", re.I)
+
+
+def find_group_careers_page(pages: List[Page], site: str, name: str) -> Optional[str]:
+    """A careers page on the same company's other host (telenor.no -> telenor.com), not a third-party board.
+
+    Large groups publish their vacancies on a shared group site rather than the subsidiary's own host. The link is
+    only followed when the target host carries a distinctive token of this company's registered name, so a link to a
+    recruitment agency or an unrelated group is never read.
+    """
+    for page in pages:
+        for a in page.soup.find_all("a", href=True):
+            href = a["href"].strip()
+            if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+                continue
+            url = urljoin(page.url, href.split("#")[0]).split("?")[0]
+            if same_site(url, site) or is_job_board_listing(url) or is_ats_posting(url):
+                continue
+            host = host_of(url)
+            if not host or not domain_matches_name(host, name):
+                continue
+            if GROUP_JOBS_HINT.search(urlparse(url).path or "") or GROUP_JOBS_HINT.search(
+                    re.sub(r"\s+", " ", a.get_text(" ")).strip()):
+                return url
+    return None
 
 
 def jobs_from_jsonld(page: Page, site: str, today: date) -> List[Dict[str, Any]]:
@@ -901,7 +977,7 @@ def jobs_from_jsonld(page: Page, site: str, today: date) -> List[Dict[str, Any]]
                 d = parse_date(cur.get("datePosted"))
                 if isinstance(title, str) and isinstance(raw, str):
                     url = urljoin(page.url, raw)
-                    title = _clean_title(title)
+                    title = clean_job_title(_clean_title(title))
                     if (same_site(url, site) or is_ats_posting(url)) and valid_job_title(title) \
                             and JOB_TITLE_HINT.search(title):
                         out.append({
@@ -943,7 +1019,7 @@ def jobs_from_board(page: Page, board_url: str, today: date) -> List[Dict[str, A
         if key in seen:
             continue
         heading = a.find(re.compile("^h[1-4]$")) or a.find_parent(re.compile("^h[1-4]$"))
-        title = _clean_title((heading or a).get_text(" "))
+        title = clean_job_title(_clean_title((heading or a).get_text(" ")))
         if not valid_job_title(title) or not JOB_TITLE_HINT.search(title):
             continue
         seen.add(key)
@@ -979,12 +1055,21 @@ def publish_jobs(result: Dict[str, Any]) -> None:
 
 
 def dedupe_jobs(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    seen, out = set(), []
+    """One vacancy, one row. The same ad on two boards (FINN and Jobbnorge) is still one role; two identical
+    titles on the same board are different vacancies (Vinmonopolet lists seven "Deltidsekspeditør" ads)."""
+    seen, hosts_by_title, out = set(), {}, []
     for it in items:
         key = it["url"].rstrip("/").lower()
-        if key not in seen:
-            seen.add(key)
-            out.append(it)
+        if key in seen:
+            continue
+        seen.add(key)
+        title = re.sub(r"\s+", " ", it["title"]).strip().casefold()
+        host = host_of(it["url"])
+        hosts = hosts_by_title.setdefault(title, set())
+        if hosts and host not in hosts:
+            continue
+        hosts.add(host)
+        out.append(it)
     return out[:MAX_JOBS]
 
 
@@ -1056,11 +1141,16 @@ def jobbnorge_jobs(name: str, employer_ids: List[str], today: date, logs: List[s
         if not (by_id or by_name):
             continue
         matched += 1
-        title = _clean_title(job.get("title") or "")
+        title = clean_job_title(_clean_title(job.get("title") or ""))
         link = job.get("link") if isinstance(job.get("link"), str) else ""
-        if not valid_job_title(title) or not JOB_TITLE_HINT.search(title) or not is_job_board_posting(link):
+        # The board's own employer record is the match, so a real title is enough; menu labels and
+        # no-vacancy notices are still rejected by valid_job_title.
+        if not valid_job_title(title) or not is_job_board_posting(link):
             continue
         posted = parse_date(job.get("publicationDate"))
+        # A board keeps old notices online; only a posting published within the last year is published here.
+        if posted and (today - posted).days > 365:
+            continue
         out.append({
             "title": title,
             "url": link,
@@ -1215,6 +1305,18 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
             jobs += found
             break
     jobs += jobs_from_jsonld(home, site_url, today)
+    # A group that publishes vacancies on a shared careers site (telenor.no -> telenor.com) keeps the company's own
+    # host free of postings. Read that page only when its host carries the company's name, and only postings that
+    # live on that same host, so nothing from an agency or a sister brand slips in.
+    if sum(1 for j in jobs if j.get("url")) < 3:
+        group_url = find_group_careers_page(([jobs_page] if jobs_page else []) + pages, site_url, name)
+        if group_url and budget.used < budget.limit:
+            group_page = fetch(group_url, budget, logs)
+            if group_page:
+                found = jobs_from_html(group_page, group_page.url, norway_only=True)
+                jobs += found
+                logs.append(f"Website: the company's careers page sent us to {host_of(group_page.url)}, where "
+                            f"{len(found)} posting(s) for a Norwegian unit of the group are listed.")
     # Jobbnorge postings are published by the employer on a job board, not on its own site. Read the board's
     # public JSON feed rather than the JavaScript page, matching this employer by id or by exact employer name.
     ids = jobbnorge_employer_ids(pages + ([jobs_page] if jobs_page else []))
