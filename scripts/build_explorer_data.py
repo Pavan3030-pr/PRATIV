@@ -55,12 +55,21 @@ def display(key, ev, profile):
     return snip.split(": ", 1)[1] if ": " in snip and key in ("financial_revenue", "operating_result", "net_profit", "employees") else snip
 
 
+def last_crawl(row):
+    """Newest evidence timestamp in a result row, so an older run file never overwrites a fresher crawl."""
+    return max((ev.get("crawl_timestamp") or "" for ev in row.get("lineage_evidences") or []), default="")
+
+
 def main():
     rows = {r["company_number"]: r for r in json.loads((ROOT / "db" / "profiles_enriched.json").read_text(encoding="utf-8"))}
     for extra in (ROOT / "results.jsonl", ROOT / "output" / "results.jsonl"):
         for r in load_jsonl(extra):
-            if r.get("company_number"):
-                rows[r["company_number"]] = {**rows.get(r["company_number"], {}), **r}
+            org = r.get("company_number")
+            if not org:
+                continue
+            current = rows.get(org)
+            if current is None or last_crawl(r) > last_crawl(current):
+                rows[org] = {**current, **r} if current else r
 
     if OUT.exists():
         shutil.rmtree(OUT)
