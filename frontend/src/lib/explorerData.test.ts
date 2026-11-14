@@ -125,9 +125,10 @@ describe('live registry fallback', () => {
         _embedded: {
           enheter: [
             { organisasjonsnummer: '999999991', navn: 'NITO TELE', forretningsadresse: { poststed: 'OSLO' } },
+            { organisasjonsnummer: '814742342', navn: 'TELENOR A/S', organisasjonsform: { kode: 'UTLA' } },
             { ...ENTITY },
-            { organisasjonsnummer: '931479849', navn: 'TELENOR CDP AS', naeringskode1: { beskrivelse: 'Utleie' } },
-            { organisasjonsnummer: '999999992', navn: 'TELENOR FESTEKONTRAKTER AS' },
+            { organisasjonsnummer: '931479849', navn: 'TELENOR CDP AS', organisasjonsform: { kode: 'AS' }, naeringskode1: { beskrivelse: 'Utleie' } },
+            { organisasjonsnummer: '999999992', navn: 'TELENOR FESTEKONTRAKTER AS', organisasjonsform: { kode: 'AS' } },
           ],
         },
       }),
@@ -135,7 +136,8 @@ describe('live registry fallback', () => {
     vi.stubGlobal('fetch', fetchMock)
     const rows = await searchRegistry('telenor')
     expect(fetchMock.mock.calls[0][0]).toContain('navn=telenor')
-    expect(rows.map((r) => r[1])).toEqual(['TELENOR ASA', 'TELENOR CDP AS', 'TELENOR FESTEKONTRAKTER AS'])
+    // A Norwegian ASA ranks above a foreign registration of the same name.
+    expect(rows.map((r) => r[1])).toEqual(['TELENOR ASA', 'TELENOR CDP AS', 'TELENOR FESTEKONTRAKTER AS', 'TELENOR A/S'])
     expect(rows[0]).toEqual(['982463718', 'TELENOR ASA', 'Fornebu', 'ASA', 'Trådløs telekommunikasjon', 0, 1])
   })
 

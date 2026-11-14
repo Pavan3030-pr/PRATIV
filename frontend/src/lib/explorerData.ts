@@ -227,12 +227,23 @@ export async function searchRegistry(query: string): Promise<IndexRow[]> {
     `${BRREG}?navn=${encodeURIComponent(q)}&size=25`,
   )
   const tokens = fold(q).split(/\s+/).filter(Boolean)
+  const wanted = fold(q)
+  // The register matches names loosely and includes foreign registrations, so rank the company a buyer
+  // means first: an exact name, then a Norwegian limited company (AS/ASA), then the rest alphabetically.
+  const rank = (e: BrregEntity) => {
+    const name = fold(e.navn ?? '')
+    return [
+      name === wanted ? 0 : 1,
+      name.startsWith(tokens[0]) ? 0 : 1,
+      ['AS', 'ASA'].includes(e.organisasjonsform?.kode ?? '') ? 0 : 1,
+      name,
+    ] as const
+  }
   const rows = (data._embedded?.enheter ?? [])
     .filter((e) => e.organisasjonsnummer && e.navn && tokens.every((t) => fold(e.navn ?? '').includes(t)))
     .sort((a, b) => {
-      const startA = fold(a.navn ?? '').startsWith(tokens[0]) ? 0 : 1
-      const startB = fold(b.navn ?? '').startsWith(tokens[0]) ? 0 : 1
-      return startA - startB || (a.navn ?? '').localeCompare(b.navn ?? '')
+      const [ra, rb] = [rank(a), rank(b)]
+      return ra[0] - rb[0] || ra[1] - rb[1] || ra[2] - rb[2] || ra[3].localeCompare(rb[3])
     })
     .slice(0, 8)
     .map((e): IndexRow => [
