@@ -58,4 +58,10 @@ SIGNALPOST is a source-first company research application. It retrieves organiza
 ## Public explorer (Signalpost website bonus)
 
 Open `/#/explore`: find a company, open it, check each fact against its source, compare two. No login.
+
+- **Nothing is reported missing just because it is not in the crawl.** A search that matches no crawled profile asks Enhetsregisteret live (public, CORS-enabled API; same source the agent reads) and lists real register matches. Opening one shows a clearly labelled **registry-only** record: legal name, form, address, founding date, employees, industry, status and website, each read in that request with its retrieval time and SHA-256.
+- **How it works** (`/#/explore/about`) states where every kind of fact comes from, the ownership rule for websites, what is never shown, and the known limits.
+- **Honest failure states**: a failed register lookup says so instead of implying no company exists; a missing dataset document falls back to the register; an unreachable source is reported as unreachable.
+
+Crawler behaviour: `/robots.txt` is fetched once per host and honoured — a disallowed path is skipped and logged, never fetched.
 Data: `python3 scripts/build_explorer_data.py`. Smoke test: `node scripts/smoke_explorer.mjs [site-url]`.

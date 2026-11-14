@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
-import { checkFact, factsCsv, loadDoc, loadIndex, money, sourceLabel, type ExDoc, type ExFact } from './explorerData'
+import {
+  checkFact,
+  factsCsv,
+  loadDoc,
+  loadIndex,
+  loadRegistryDoc,
+  money,
+  searchRegistry,
+  sourceLabel,
+  type ExDoc,
+  type ExFact,
+} from './explorerData'
 
 const base = 'https://data.brreg.no/enhetsregisteret/api/enheter/984851006'
 
@@ -92,6 +103,94 @@ describe('factsCsv', () => {
     expect(csv).toContain('"ACME, ""NORD"" AS"')
     expect(csv).toContain('"Read from the registry.\nSecond line."')
     expect(csv.endsWith('\n')).toBe(true)
+  })
+})
+
+const ENTITY = {
+  organisasjonsnummer: '982463718',
+  navn: 'TELENOR ASA',
+  organisasjonsform: { kode: 'ASA' },
+  stiftelsesdato: '1996-11-07',
+  antallAnsatte: 9000,
+  naeringskode1: { beskrivelse: 'Trådløs telekommunikasjon' },
+  hjemmeside: 'www.telenor.no/',
+  konkurs: false,
+  forretningsadresse: { adresse: ['Snarøyveien 30'], postnummer: '1360', poststed: 'FORNEBU', land: 'Norge' },
+}
+
+describe('live registry fallback', () => {
+  it('finds companies by name, keeping only real matches and putting prefix matches first', async () => {
+    const fetchMock = vi.fn((_url: RequestInfo | URL) =>
+      json({
+        _embedded: {
+          enheter: [
+            { organisasjonsnummer: '999999991', navn: 'NITO TELE', forretningsadresse: { poststed: 'OSLO' } },
+            { ...ENTITY },
+            { organisasjonsnummer: '931479849', navn: 'TELENOR CDP AS', naeringskode1: { beskrivelse: 'Utleie' } },
+            { organisasjonsnummer: '999999992', navn: 'TELENOR FESTEKONTRAKTER AS' },
+          ],
+        },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const rows = await searchRegistry('telenor')
+    expect(fetchMock.mock.calls[0][0]).toContain('navn=telenor')
+    expect(rows.map((r) => r[1])).toEqual(['TELENOR ASA', 'TELENOR CDP AS', 'TELENOR FESTEKONTRAKTER AS'])
+    expect(rows[0]).toEqual(['982463718', 'TELENOR ASA', 'Fornebu', 'ASA', 'Trådløs telekommunikasjon', 0, 1])
+  })
+
+  it('looks up a 9-digit organisation number directly and ignores shorter queries', async () => {
+    const fetchMock = vi.fn((_url: RequestInfo | URL) => json(ENTITY))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await searchRegistry('t')).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+    const rows = await searchRegistry('982463718')
+    expect(fetchMock.mock.calls[0][0]).toContain('/enheter/982463718')
+    expect(rows[0][1]).toBe('TELENOR ASA')
+  })
+
+  it('fails loudly when the register itself is down, so the UI never reports a false "no match"', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('no', { status: 503 }))))
+    await expect(searchRegistry('telenor')).rejects.toThrow('HTTP 503')
+    await expect(searchRegistry('982463718')).rejects.toThrow('HTTP 503')
+  })
+
+  it('describes a live register record with source, path, timestamp and hash', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => json(ENTITY)))
+    const doc = await loadRegistryDoc('982463718')
+    expect(doc.registryOnly).toBe(true)
+    expect(doc.name).toBe('TELENOR ASA')
+    expect(doc.base).toBe('https://data.brreg.no/enhetsregisteret/api/enheter/982463718')
+    const byKey = Object.fromEntries(doc.facts.map((f) => [f.k, f]))
+    expect(byKey.official_legal_name.v).toBe('TELENOR ASA')
+    expect(byKey.industry.p).toBe('naeringskode1.beskrivelse')
+    expect(byKey.industry.v).toBe('Trådløs telekommunikasjon')
+    expect(byKey.registered_address.v).toBe('Snarøyveien 30, 1360 FORNEBU, Norge')
+    expect(byKey.company_status.v).toBe('Active')
+    expect(byKey.website.v).toBe('www.telenor.no/')
+    for (const f of doc.facts) {
+      expect(f.t).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+      expect(f.s).toMatch(/^[0-9a-f]{64}$/)
+      expect(f.u).toBeUndefined() // source URL is the document's own registry record
+    }
+    expect(doc.fin).toBeNull()
+    expect(doc.jobs).toEqual([])
+    expect(doc.missing.website_check).toContain('not been crawled')
+  })
+
+  it('says bankruptcy when the register does', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => json({ ...ENTITY, konkurs: true })))
+    const doc = await loadRegistryDoc('982463718')
+    expect(doc.facts.find((f) => f.k === 'company_status')?.v).toBe('Bankrupt')
+  })
+
+  it('verifies a nested field path against the live source', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => json({ antallAnsatte: 42, naeringskode1: { beskrivelse: 'Bank' } })))
+    const result = await checkFact(
+      fact({ p: 'naeringskode1.beskrivelse', v: 'Bank', s: '' }),
+      base,
+    )
+    expect(result.tone).toBe('ok')
   })
 })
 

@@ -187,6 +187,71 @@ class WebBudget:
         return True
 
 
+class RobotsRules:
+    """The subset of robots.txt this crawler needs: Allow/Disallow for `*` and for our own agent."""
+
+    def __init__(self, groups: Dict[str, List[Tuple[bool, str]]]):
+        self.rules = groups.get("signalpost-agent") or groups.get("*") or []
+
+    def allows(self, path: str) -> bool:
+        path = path or "/"
+        best_len, allowed = -1, True
+        for is_allow, pattern in self.rules:
+            if pattern == "":
+                continue
+            anchored = pattern.endswith("$")
+            body = pattern[:-1] if anchored else pattern
+            regex = "^" + ".*".join(re.escape(part) for part in body.split("*")) + ("$" if anchored else "")
+            if re.match(regex, path, re.I) and len(pattern) >= best_len:
+                best_len, allowed = len(pattern), is_allow
+        return allowed
+
+
+def parse_robots(text: str) -> RobotsRules:
+    groups: Dict[str, List[Tuple[bool, str]]] = {}
+    agents: List[str] = []
+    in_rules = False
+    for raw in (text or "").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if ":" not in line:
+            continue
+        field, value = line.split(":", 1)
+        field, value = field.strip().lower(), value.strip()
+        if field == "user-agent":
+            if in_rules:  # a new agent block starts
+                agents, in_rules = [], False
+            agents.append(value.lower().split("/")[0])
+            in_rules = False
+        elif field in ("allow", "disallow"):
+            in_rules = True
+            for agent in agents or ["*"]:
+                groups.setdefault(agent, []).append((field == "allow", value))
+    return RobotsRules(groups)
+
+
+ROBOTS_UNSET = object()
+_robots_cache: Dict[str, Any] = {}
+
+
+def robots_rules(scheme: str, host: str) -> RobotsRules:
+    """Fetch and cache /robots.txt once per host. An unreachable or missing file allows crawling."""
+    key = f"{scheme}://{host}"
+    cached = _robots_cache.get(key, ROBOTS_UNSET)
+    if cached is not ROBOTS_UNSET:
+        return cached  # type: ignore[return-value]
+    rules = RobotsRules({})
+    if len(_robots_cache) > 500:  # a long crawl over many hosts must not grow without bound
+        _robots_cache.clear()
+    try:
+        resp = requests.get(f"{key}/robots.txt", headers=WEB_HEADERS, timeout=WEB_TIMEOUT, allow_redirects=True)
+        if resp.status_code == 200:
+            rules = parse_robots(resp.text[:200_000])
+    except requests.RequestException:
+        pass
+    _robots_cache[key] = rules
+    return rules
+
+
 class Page:
     def __init__(self, url: str, text: str, ctype: str):
         self.url, self.text, self.ctype = url, text, ctype
@@ -204,8 +269,12 @@ def fetch(url: str, budget: WebBudget, logs: List[str]) -> Optional[Page]:
     current = url
     for _ in range(MAX_REDIRECTS + 1):
         host = urlparse(current).hostname or ""
-        if urlparse(current).scheme not in ("http", "https") or not public_host(host):
+        parsed = urlparse(current)
+        if parsed.scheme not in ("http", "https") or not public_host(host):
             logs.append(f"Website: refused to fetch {current} (not a public http(s) host).")
+            return None
+        if not robots_rules(parsed.scheme, host).allows(parsed.path or "/"):
+            logs.append(f"Website: {parsed.path or '/'} is disallowed by {host}/robots.txt; skipped.")
             return None
         if not budget.spend():
             logs.append("Website: per-company request limit reached; remaining pages skipped.")

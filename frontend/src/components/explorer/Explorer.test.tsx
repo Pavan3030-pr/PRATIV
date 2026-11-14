@@ -46,7 +46,7 @@ function json(body: unknown, status = 200) {
   )
 }
 
-function mockApi(docs: ExDoc[], live: Record<string, unknown> = {}) {
+function mockApi(docs: ExDoc[], live: Record<string, unknown> = {}, search: Record<string, unknown>[] = []) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const url = String(input)
     if (url.includes('/explore/index.json')) return json(index)
@@ -55,11 +55,24 @@ function mockApi(docs: ExDoc[], live: Record<string, unknown> = {}) {
       const found = docs.find((d) => d.n === match[1])
       return found ? json(found) : Promise.resolve(new Response('no', { status: 404 }))
     }
-    if (url.includes('/enhetsregisteret/api/enheter/')) return json(live)
+    if (url.includes('/enhetsregisteret/api/enheter/')) {
+      return Object.keys(live).length ? json(live) : Promise.resolve(new Response('no', { status: 404 }))
+    }
+    if (url.includes('/enhetsregisteret/api/enheter?')) return json({ _embedded: { enheter: search } })
     return Promise.resolve(new Response('no', { status: 404 }))
   })
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
+}
+
+const TELENOR = {
+  organisasjonsnummer: '982463718',
+  navn: 'TELENOR ASA',
+  organisasjonsform: { kode: 'ASA' },
+  stiftelsesdato: '1996-11-07',
+  antallAnsatte: 9000,
+  naeringskode1: { beskrivelse: 'Trådløs telekommunikasjon' },
+  forretningsadresse: { adresse: ['Snarøyveien 30'], postnummer: '1360', poststed: 'FORNEBU', land: 'Norge' },
 }
 
 describe('explorer company page', () => {
@@ -96,11 +109,40 @@ describe('explorer company page', () => {
     expect(await screen.findByText(/Verified: the live source shows the same value/)).toBeInTheDocument()
   })
 
-  it('explains a company that is not in the dataset', async () => {
+  it('explains a company that is neither in the dataset nor in the register', async () => {
     window.location.hash = '#/explore/c/999999999'
     mockApi([])
     render(<Explorer />)
     expect(await screen.findByText('Company not found')).toBeInTheDocument()
+  })
+
+  it('reads a company that is outside the dataset straight from the register', async () => {
+    window.location.hash = '#/explore/c/982463718'
+    mockApi([], TELENOR)
+    render(<Explorer />)
+
+    expect(await screen.findByRole('heading', { name: 'TELENOR ASA' })).toBeInTheDocument()
+    expect(screen.getByText('Registry only')).toBeInTheDocument()
+    expect(screen.getByText(/not in the crawled dataset/)).toBeInTheDocument()
+    expect(screen.getByText('Trådløs telekommunikasjon')).toBeInTheDocument()
+    expect(screen.getByText('9000')).toBeInTheDocument()
+    expect(screen.queryByText('Company not found')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Official record/ })).toHaveAttribute(
+      'href',
+      'https://data.brreg.no/enhetsregisteret/api/enheter/982463718',
+    )
+  })
+})
+
+describe('how it works page', () => {
+  it('states the sources and the limits', async () => {
+    window.location.hash = '#/explore/about'
+    mockApi([])
+    render(<Explorer />)
+    expect(await screen.findByRole('heading', { name: 'How this works' })).toBeInTheDocument()
+    expect(screen.getAllByText(/Enhetsregisteret/).length).toBeGreaterThan(0)
+    expect(screen.getByText(/Jobbnorge, Workday/)).toBeInTheDocument()
+    expect(screen.getByText(/never estimated/)).toBeInTheDocument()
   })
 })
 
@@ -118,6 +160,36 @@ describe('explorer search', () => {
     const row = screen.getByText('EQUINOR ASA').closest('li') as HTMLElement
     await userEvent.click(within(row).getByRole('button', { name: 'Add to comparison' }))
     expect(screen.getByText(/selected — pick one more to compare/)).toBeInTheDocument()
+  })
+})
+
+describe('registry search fallback', () => {
+  it('offers register matches when nothing in the crawl matches', async () => {
+    window.location.hash = '#/explore'
+    mockApi([], {}, [{ organisasjonsnummer: '982463718', navn: 'TELENOR ASA', organisasjonsform: { kode: 'ASA' } }])
+    render(<Explorer />)
+
+    await screen.findByText('DNB BANK ASA')
+    await userEvent.type(screen.getByRole('searchbox'), 'telenor')
+    expect(await screen.findByText(/Found in Enhetsregisteret/)).toBeInTheDocument()
+    const link = screen.getAllByRole('link', { name: /TELENOR ASA/ })[0]
+    expect(link).toHaveAttribute('href', '#/explore/c/982463718')
+    expect(screen.getByText(/no website, news or jobs/)).toBeInTheDocument()
+  })
+
+  it('reports a register failure instead of pretending the company is missing', async () => {
+    window.location.hash = '#/explore'
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/explore/index.json')) return json(index)
+      return Promise.resolve(new Response('no', { status: 503 }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<Explorer />)
+
+    await screen.findByText('DNB BANK ASA')
+    await userEvent.type(screen.getByRole('searchbox'), 'telenor')
+    expect(await screen.findByText(/live register search failed/)).toBeInTheDocument()
   })
 })
 

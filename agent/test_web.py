@@ -19,6 +19,10 @@ class Resp:
         self.headers = headers or {"Content-Type": "text/html; charset=utf-8"}
         self.encoding = "utf-8"
 
+    @property
+    def text(self):
+        return self._body.decode("utf-8", errors="replace")
+
     def iter_content(self, size):
         yield self._body
 
@@ -422,6 +426,70 @@ class CoreIntegrationTests(unittest.TestCase):
             r = self.crawl({})
         self.assertEqual(r["official_legal_name"], NAME)
         self.assertIn("Website check failed", r["missing_fields"]["news"])
+
+
+class RobotsTests(unittest.TestCase):
+    def setUp(self):
+        web._robots_cache.clear()
+
+    def rules(self, text):
+        return web.parse_robots(text)
+
+    def test_missing_robots_allows_everything(self):
+        r = self.rules("")
+        self.assertTrue(r.allows("/"))
+        self.assertTrue(r.allows("/karriere"))
+
+    def test_disallow_blocks_a_prefixed_path(self):
+        r = self.rules("User-agent: *\nDisallow: /search\nDisallow: /admin/")
+        self.assertFalse(r.allows("/search"))
+        self.assertFalse(r.allows("/search?q=x"))
+        self.assertFalse(r.allows("/admin/panel"))
+        self.assertTrue(r.allows("/karriere"))
+
+    def test_longer_allow_wins_over_disallow(self):
+        r = self.rules("User-agent: *\nDisallow: /karriere\nAllow: /karriere/ledige-stillinger")
+        self.assertFalse(r.allows("/karriere"))
+        self.assertTrue(r.allows("/karriere/ledige-stillinger/123"))
+
+    def test_our_agent_group_overrides_the_star_group(self):
+        r = self.rules("User-agent: *\nDisallow: /\n\nUser-agent: signalpost-agent\nDisallow: /admin")
+        self.assertTrue(r.allows("/karriere"))
+        self.assertFalse(r.allows("/admin"))
+
+    def test_wildcard_and_end_anchor(self):
+        r = self.rules("User-agent: *\nDisallow: /*.pdf$\nDisallow: /sok*")
+        self.assertFalse(r.allows("/rapport.pdf"))
+        self.assertTrue(r.allows("/rapport.pdf?x=1"))
+        self.assertFalse(r.allows("/sok?q=1"))
+
+    def test_disallowed_page_is_never_fetched(self):
+        pages = {"https://foo.no/robots.txt": "User-agent: *\nDisallow: /karriere",
+                 "https://foo.no": "<html><body>hei</body></html>"}
+        logs = []
+        with patch("web.requests.get", side_effect=site(pages)), patch("web.public_host", return_value=True):
+            page = web.fetch("https://foo.no/karriere", web.WebBudget(Sess(), lambda: None), logs)
+        self.assertIsNone(page)
+        self.assertTrue(any("robots.txt" in line for line in logs))
+
+    def test_robots_is_fetched_once_per_host(self):
+        pages = {"https://foo.no/robots.txt": "User-agent: *\nDisallow: /nei",
+                 "https://foo.no/a": "<html><body>a</body></html>",
+                 "https://foo.no/b": "<html><body>b</body></html>"}
+        fake = site(pages)
+        with patch("web.requests.get", side_effect=fake) as get, patch("web.public_host", return_value=True):
+            budget = web.WebBudget(Sess(), lambda: None)
+            self.assertIsNotNone(web.fetch("https://foo.no/a", budget, []))
+            self.assertIsNotNone(web.fetch("https://foo.no/b", budget, []))
+        calls = [c.args[0] for c in get.call_args_list]
+        self.assertEqual(calls.count("https://foo.no/robots.txt"), 1)
+
+    def test_unreachable_robots_does_not_block_the_crawl(self):
+        pages = {"https://foo.no/robots.txt": requests.ConnectionError("down"),
+                 "https://foo.no": "<html><body>hei</body></html>"}
+        with patch("web.requests.get", side_effect=site(pages)), patch("web.public_host", return_value=True):
+            page = web.fetch("https://foo.no", web.WebBudget(Sess(), lambda: None), [])
+        self.assertIsNotNone(page)
 
 
 class RunnerTests(unittest.TestCase):

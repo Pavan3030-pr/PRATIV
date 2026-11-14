@@ -22,7 +22,9 @@ import {
   factsCsv,
   loadDoc,
   loadIndex,
+  loadRegistryDoc,
   money,
+  searchRegistry,
   sourceLabel,
   type CheckResult,
   type ExDoc,
@@ -32,11 +34,13 @@ import {
 
 type Route =
   | { page: 'home' }
+  | { page: 'about' }
   | { page: 'company'; org: string }
   | { page: 'compare'; a: string; b: string }
 
 function parseRoute(): Route {
   const parts = window.location.hash.replace(/^#\/?/, '').split('/').filter(Boolean)
+  if (parts[1] === 'about') return { page: 'about' }
   if (parts[1] === 'c' && /^\d{9}$/.test(parts[2] ?? '')) return { page: 'company', org: parts[2] }
   if (parts[1] === 'compare' && /^\d{9}$/.test(parts[2] ?? '') && /^\d{9}$/.test(parts[3] ?? '')) {
     return { page: 'compare', a: parts[2], b: parts[3] }
@@ -60,8 +64,8 @@ function Shell({ children, wide = false }: { children: React.ReactNode; wide?: b
           <a href="#/explore" aria-label="Signalpost explorer home">
             <Brand compact />
           </a>
-          <a href="#" className="text-[13px] text-muted hover:text-ink">
-            About
+          <a href="#/explore/about" className="text-[13px] text-muted hover:text-ink">
+            How it works
           </a>
         </div>
       </header>
@@ -118,11 +122,14 @@ function PickButton({ org, picked, toggle }: { org: string; picked: string[]; to
   )
 }
 
+type RegistrySearch = { q: string; rows: IndexRow[]; busy: boolean; error?: string }
+
 function Home({ index, picked, toggle }: { index: IndexRow[] | null; picked: string[]; toggle: (o: string) => void }) {
   const [q, setQ] = useState('')
   const [onlyAccounts, setOnlyAccounts] = useState(false)
   const [onlyWeb, setOnlyWeb] = useState(false)
   const [limit, setLimit] = useState(30)
+  const [reg, setReg] = useState<RegistrySearch>({ q: '', rows: [], busy: false })
 
   const hay = useMemo(
     () => (index ?? []).map((r) => `${r[1]} ${r[0]} ${r[2]} ${r[4]}`.toLowerCase()),
@@ -143,6 +150,25 @@ function Home({ index, picked, toggle }: { index: IndexRow[] | null; picked: str
       ? out.sort((a, b) => Number(b[1].toLowerCase().startsWith(first)) - Number(a[1].toLowerCase().startsWith(first)))
       : out
   }, [index, hay, q, onlyAccounts, onlyWeb])
+
+  const trimmed = q.trim()
+  const registryChecked = reg.q === trimmed && !reg.busy && !reg.error
+
+  // Nothing in the crawl for this query: ask the official register so a real company is never reported missing.
+  useEffect(() => {
+    if (index === null || results.length > 0 || trimmed.length < 2) return
+    let alive = true
+    const timer = window.setTimeout(() => {
+      setReg({ q: trimmed, rows: [], busy: true })
+      searchRegistry(trimmed)
+        .then((rows) => alive && setReg({ q: trimmed, rows, busy: false }))
+        .catch((e: Error) => alive && setReg({ q: trimmed, rows: [], busy: false, error: e.message }))
+    }, 350)
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+  }, [index, trimmed, results.length])
 
   const chip = (on: boolean) =>
     cn(
@@ -216,7 +242,54 @@ function Home({ index, picked, toggle }: { index: IndexRow[] | null; picked: str
             ))}
           </ul>
           {results.length === 0 ? (
-            <p className="mt-6 text-[14px] text-graphite">No match. Try fewer words, or a 9-digit organisation number.</p>
+            <div className="mt-6">
+              <p className="text-[14px] text-graphite">
+                No crawled profile matches “{trimmed}”. Checking the official register…
+              </p>
+              {trimmed.length >= 2 && reg.q !== trimmed ? (
+                <p className="mt-3 flex items-center gap-2 text-[13px] text-muted" role="status">
+                  <LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> Searching Enhetsregisteret
+                </p>
+              ) : reg.busy ? (
+                <p className="mt-3 flex items-center gap-2 text-[13px] text-muted" role="status">
+                  <LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> Searching Enhetsregisteret
+                </p>
+              ) : reg.error ? (
+                <p className="mt-3 rounded-control bg-warning-soft px-3 py-2 text-[13px] text-warning">
+                  The live register search failed ({reg.error}). Try fewer words, or a 9-digit organisation number.
+                </p>
+              ) : reg.rows.length > 0 ? (
+                <>
+                  <p className="mt-5 text-[12px] font-medium tracking-wide text-muted uppercase">
+                    Found in Enhetsregisteret · read live, not crawled yet
+                  </p>
+                  <ul className="mt-2 grid gap-2">
+                    {reg.rows.map((r) => (
+                      <li key={r[0]}>
+                        <a
+                          href={`#/explore/c/${r[0]}`}
+                          className="block rounded-panel border border-dashed border-line-strong bg-paper px-4 py-3 transition-colors hover:bg-sunken"
+                        >
+                          <span className="block truncate text-[15px] font-medium">{r[1]}</span>
+                          <span className="mt-0.5 block truncate text-[12.5px] text-muted">
+                            {r[0]}
+                            {r[2] ? ` · ${r[2]}` : ''}
+                            {r[3] ? ` · ${r[3]}` : ''}
+                          </span>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-[12px] text-faint">
+                    These records are not part of the crawl, so they show register fields only — no website, news or jobs.
+                  </p>
+                </>
+              ) : registryChecked ? (
+                <p className="mt-3 text-[14px] text-graphite">
+                  The register has no active company matching that. Check the spelling, or search the 9-digit organisation number.
+                </p>
+              ) : null}
+            </div>
           ) : null}
           {results.length > limit ? (
             <div className="mt-4 text-center">
@@ -348,9 +421,28 @@ function FactRow({ fact, base }: { fact: ExFact; base: string }) {
 function CompanyPage({ org, picked, toggle }: { org: string; picked: string[]; toggle: (o: string) => void }) {
   const state = useDoc(org)
   const [copied, setCopied] = useState(false)
+  const [reg, setReg] = useState<{ org: string; doc?: ExDoc; error?: string } | null>(null)
+
+  // Not in the crawled dataset: read the company from Enhetsregisteret instead of saying it does not exist.
+  useEffect(() => {
+    if (!state?.error) return
+    let alive = true
+    loadRegistryDoc(org)
+      .then((doc) => alive && setReg({ org, doc }))
+      .catch((e: Error) => alive && setReg({ org, error: e.message }))
+    return () => {
+      alive = false
+    }
+  }, [org, state?.error])
+
   if (!state) return <Loading />
-  if (state.error || !state.doc) return <NotFound message={state.error} />
-  const d = state.doc
+  const d = state.doc ?? (reg?.org === org ? reg.doc : undefined)
+  if (!d) {
+    if (reg?.org === org && reg.error) {
+      return <NotFound message={`${state.error ?? 'Not in this dataset'}. The live register lookup also failed: ${reg.error}`} />
+    }
+    return <Loading label={state.error ? 'Not in the crawled dataset — reading Enhetsregisteret…' : undefined} />
+  }
   const active = (d.facts.find((f) => f.k === 'company_status')?.v ?? '').toLowerCase().startsWith('active')
   const retrieved = d.facts[0]?.t
 
@@ -376,10 +468,20 @@ function CompanyPage({ org, picked, toggle }: { org: string; picked: string[]; t
         <Badge>Org. nr {d.n}</Badge>
         <Badge tone={active ? 'success' : 'warning'}>{active ? 'Active' : 'Check status'}</Badge>
         {retrieved ? <Badge>Retrieved {formatDate(retrieved)}</Badge> : null}
-        {d.update.status ? (
+        {d.registryOnly ? (
+          <Badge tone="neutral">Registry only</Badge>
+        ) : d.update.status ? (
           <Badge tone={d.update.status === 'changed' ? 'warning' : 'neutral'}>Update: {d.update.status}</Badge>
         ) : null}
       </div>
+
+      {d.registryOnly ? (
+        <p className="mt-4 rounded-panel border border-line-strong bg-sunken px-4 py-3 text-[13px] leading-relaxed text-graphite">
+          <span className="font-medium text-ink">This company is not in the crawled dataset.</span> The fields below were read
+          from Enhetsregisteret in this request, so each one links to the official record and carries its retrieval time.
+          The company’s own website, news, job postings and annual accounts need a crawler run and are not shown.
+        </p>
+      ) : null}
       <div className="mt-4 flex flex-wrap gap-2">
         <PickButton org={d.n} picked={picked} toggle={toggle} />
         <a
@@ -493,7 +595,7 @@ function CompanyPage({ org, picked, toggle }: { org: string; picked: string[]; t
         </>
       ) : null}
 
-      <p className="mt-8 text-[11.5px] break-all text-faint">Registry hash {d.hash}</p>
+      {d.hash ? <p className="mt-8 text-[11.5px] break-all text-faint">Registry hash {d.hash}</p> : null}
     </>
   )
 }
@@ -561,10 +663,10 @@ function ComparePage({ a, b }: { a: string; b: string }) {
   )
 }
 
-function Loading() {
+function Loading({ label }: { label?: string }) {
   return (
     <p className="flex items-center gap-2 py-10 text-[14px] text-muted" role="status">
-      <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> Loading…
+      <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> {label ?? 'Loading…'}
     </p>
   )
 }
@@ -576,6 +678,82 @@ function NotFound({ message }: { message?: string }) {
       <p className="mt-2 text-[14px] text-graphite">{message ?? 'It is not in this dataset.'}</p>
       <a href="#/explore" className="mt-4 inline-block text-accent hover:underline">Back to search</a>
     </div>
+  )
+}
+
+function About({ index }: { index: IndexRow[] | null }) {
+  const section = 'mt-8'
+  const h2 = 'mb-2 text-[13px] font-semibold tracking-wide text-muted uppercase'
+  const p = 'text-[14px] leading-relaxed text-graphite'
+  return (
+    <>
+      <a href="#/explore" className="inline-flex min-h-10 items-center gap-1.5 text-[13px] text-muted hover:text-ink">
+        <ArrowLeft size={14} aria-hidden="true" /> All companies
+      </a>
+      <h1 className="mt-2 text-[clamp(1.6rem,4.5vw,2.25rem)] leading-tight font-semibold tracking-[-0.03em]">How this works</h1>
+      <p className="mt-3 text-[15px] leading-relaxed text-graphite">
+        A source-backed company explorer for Norway. Every fact is shown with the field it came from, the URL it was read
+        from, the time it was retrieved and a SHA-256 of the value.
+      </p>
+
+      <section className={section}>
+        <h2 className={h2}>Where the facts come from</h2>
+        <ul className="grid gap-1.5 text-[14px] leading-relaxed text-graphite">
+          <li>
+            <span className="font-medium text-ink">Enhetsregisteret</span> — legal name, organisation form, address,
+            founding date, employees, industry, status and the website the company registered.
+          </li>
+          <li>
+            <span className="font-medium text-ink">Regnskapsregisteret</span> — the filed annual accounts, when the company
+            has filed them.
+          </li>
+          <li>
+            <span className="font-medium text-ink">The company’s own website</span> — only after the site proves it belongs
+            to this company: its domain must match the registered name <em>and</em> the page must carry the organisation
+            number or the exact legal name. A parent-group or sister-company site fails that check and is reported as not
+            verified, never published.
+          </li>
+          <li>
+            <span className="font-medium text-ink">Recognised job boards</span> — postings linked from the verified site,
+            including Teamtailor, Recruitee, Webcruiter, Jobbnorge, EasyCruit and FINN.
+          </li>
+        </ul>
+      </section>
+
+      <section className={section}>
+        <h2 className={h2}>Coverage</h2>
+        <p className={p}>
+          The crawled dataset holds {index ? index.length.toLocaleString('en-GB') : 'the'} company profiles. Anything outside
+          it is still findable: a search that misses the dataset asks Enhetsregisteret live and shows a registry-only
+          record, clearly labelled, instead of claiming the company does not exist.
+        </p>
+      </section>
+
+      <section className={section}>
+        <h2 className={h2}>What is never shown</h2>
+        <p className={p}>
+          No estimates, no inferred revenue, no unverified website, no group-level substitute. When a field cannot be
+          sourced, the profile lists it under “Not published (never estimated)” with the reason.
+        </p>
+      </section>
+
+      <section className={section}>
+        <h2 className={h2}>Known limits</h2>
+        <ul className="grid gap-1.5 text-[14px] leading-relaxed text-graphite">
+          <li>Employers whose vacancies live only on a JavaScript-only board (Jobbnorge, Workday) show no postings.</li>
+          <li>Companies that registered no website, or whose site is unreachable, show no website-derived facts.</li>
+          <li>News rendered client-side is not read; only server-rendered posts with a real publish date are published.</li>
+        </ul>
+      </section>
+
+      <section className={section}>
+        <h2 className={h2}>Check it yourself</h2>
+        <p className={p}>
+          Every fact has “Check source”, which re-fetches the source in your browser and compares it with the stored value
+          and hash. Company pages also export every sourced fact as CSV or the full profile as JSON.
+        </p>
+      </section>
+    </>
   )
 }
 
@@ -609,6 +787,7 @@ export function Explorer() {
   return (
     <Shell wide={route.page === 'compare'}>
       {route.page === 'home' ? <Home index={index} picked={picked} toggle={toggle} /> : null}
+      {route.page === 'about' ? <About index={index} /> : null}
       {route.page === 'company' ? <CompanyPage org={route.org} picked={picked} toggle={toggle} /> : null}
       {route.page === 'compare' ? <ComparePage a={route.a} b={route.b} /> : null}
       <CompareBar picked={picked} names={names.current} clear={() => setPicked([])} />
