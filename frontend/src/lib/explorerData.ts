@@ -39,8 +39,8 @@ export type ExDoc = {
   social: { platform: string; url: string }[]
 }
 
-/** [orgnr, name, city, form, industry, hasAccounts, hasWebsite] */
-export type IndexRow = [string, string, string, string, string, number, number]
+/** [orgnr, name, city, form, industry, hasAccounts, hasWebsite, employees] */
+export type IndexRow = [string, string, string, string, string, number, number, number]
 
 export type CheckResult = { tone: 'ok' | 'warn' | 'info'; text: string }
 
@@ -221,7 +221,7 @@ export async function searchRegistry(query: string): Promise<IndexRow[]> {
   if (q.length < 2) return []
   if (/^\d{9}$/.test(q)) {
     const one = await getJson<BrregEntity>(`${BRREG}/${q}`)
-    return [[q, one.navn ?? q, cityOf(one), one.organisasjonsform?.kode ?? '', one.naeringskode1?.beskrivelse ?? '', 0, one.hjemmeside ? 1 : 0]]
+    return [[q, one.navn ?? q, cityOf(one), one.organisasjonsform?.kode ?? '', one.naeringskode1?.beskrivelse ?? '', 0, one.hjemmeside ? 1 : 0, one.antallAnsatte ?? 0]]
   }
   const data = await getJson<{ _embedded?: { enheter?: BrregEntity[] } }>(
     `${BRREG}?navn=${encodeURIComponent(q)}&size=25`,
@@ -254,6 +254,7 @@ export async function searchRegistry(query: string): Promise<IndexRow[]> {
       e.naeringskode1?.beskrivelse ?? '',
       0,
       e.hjemmeside ? 1 : 0,
+      e.antallAnsatte ?? 0,
     ])
   return rows
 }

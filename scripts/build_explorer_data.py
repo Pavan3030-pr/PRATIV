@@ -100,7 +100,8 @@ def main():
         (OUT / "c" / f"{org}.json").write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         addr = profile.get("registered_address", "")
         index.append([org, doc["name"], city(addr), (profile.get("organisation_form") or "").split("(")[-1].rstrip(")"),
-                      profile.get("industry") or "", 1 if fin else 0, 1 if profile.get("website") else 0])
+                      profile.get("industry") or "", 1 if fin else 0, 1 if profile.get("website") else 0,
+                      profile.get("employees") if isinstance(profile.get("employees"), int) else 0])
     (OUT / "index.json").write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"wrote {len(index)} companies to {OUT}")
 

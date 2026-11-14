@@ -1126,6 +1126,129 @@ def jobbnorge_employer_ids(pages: List[Page]) -> List[str]:
     return ids
 
 
+# --------------------------------------------------------------------------- 4c. Workday
+# Large employers publish vacancies only in their own Workday tenant (equinor.wd3.myworkdayjobs.com/EQNR). The
+# careers page is a JavaScript shell, but the tenant's public job feed - the JSON its own page calls - lists the
+# postings with title, location and posting date, so the same vacancies can be read without a browser.
+WORKDAY_URL = re.compile(
+    r"^https://(?P<tenant>[a-z0-9-]+)\.(?P<wd>wd\d+)\.myworkdayjobs\.com/"
+    r"(?:[a-z]{2}-[A-Z]{2}/)?(?P<site>[A-Za-z0-9_-]+)",
+    re.I,
+)
+WORKDAY_TTL = 900                      # one feed request per tenant per 15 minutes, shared by a whole run
+_NORWAY = re.compile(r"\b(norway|norge|noreg)\b", re.I)
+_workday: Dict[str, Any] = {}
+
+
+def workday_sites(pages: List[Page], name: str) -> List[Dict[str, str]]:
+    """Workday tenants this company links from its own site, kept only when the tenant host carries its name.
+
+    The tenant subdomain is the employer (equinor.wd3..., norskhydro.wd3...), so a link to another company's
+    tenant - the parent group's or an agency's - is never read for this company.
+    """
+    out: List[Dict[str, str]] = []
+    for page in pages:
+        for a in page.soup.find_all("a", href=True):
+            m = WORKDAY_URL.match(html.unescape(a["href"]).strip())
+            if not m:
+                continue
+            host = f"{m.group('tenant').lower()}.{m.group('wd').lower()}.myworkdayjobs.com"
+            if not domain_matches_name(host, name):
+                continue
+            site = {"host": host, "tenant": m.group("tenant").lower(), "site": m.group("site"),
+                    "linked_from": page.url}
+            if not any((s["host"], s["site"]) == (site["host"], site["site"]) for s in out):
+                out.append(site)
+    return out[:2]
+
+
+def workday_feed(site: Dict[str, str], logs: List[str]) -> List[Dict[str, Any]]:
+    """Open postings the tenant lists, cached per process. A failed read is cached too, so a run never hammers it."""
+    key = f"{site['host']}/{site['site']}"
+    now = datetime.now(timezone.utc)
+    cached = _workday.get(key)
+    if isinstance(cached, dict) and (now - cached["at"]).total_seconds() < WORKDAY_TTL:
+        return cached["jobs"]
+    url = f"https://{site['host']}/wday/cxs/{site['tenant']}/{site['site']}/jobs"
+    jobs: List[Dict[str, Any]] = []
+    if not robots_rules("https", site["host"]).allows(urlparse(url).path or "/"):
+        logs.append(f"Website: {url} is disallowed by {site['host']}/robots.txt; Workday postings were skipped.")
+    else:
+        try:
+            resp = requests.post(
+                url,
+                json={"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": ""},
+                headers={**WEB_HEADERS, "Accept": "application/json", "Content-Type": "application/json"},
+                timeout=WEB_TIMEOUT,
+            )
+            data = resp.json() if resp.status_code == 200 else None
+            found = data.get("jobPostings") if isinstance(data, dict) else None
+            if not isinstance(found, list):
+                raise ValueError("no job list")
+            jobs = [j for j in found if isinstance(j, dict)]
+            logs.append(f"Website: the Workday job feed at {site['host']} listed {len(jobs)} posting(s).")
+        except (requests.RequestException, ValueError):
+            logs.append(f"Website: the Workday job feed at {site['host']} could not be read; its postings were skipped.")
+    _workday[key] = {"at": now, "jobs": jobs}
+    return jobs
+
+
+def workday_detail(site: Dict[str, str], external_path: str) -> Optional[Dict[str, Any]]:
+    """The tenant's own record for one posting: its country, location, publish date and canonical URL."""
+    url = f"https://{site['host']}/wday/cxs/{site['tenant']}/{site['site']}{external_path}"
+    if not robots_rules("https", site["host"]).allows(urlparse(url).path or "/"):
+        return None
+    try:
+        resp = requests.get(url, headers={**WEB_HEADERS, "Accept": "application/json"}, timeout=WEB_TIMEOUT)
+        data = resp.json() if resp.status_code == 200 else None
+        info = data.get("jobPostingInfo") if isinstance(data, dict) else None
+        return info if isinstance(info, dict) else None
+    except (requests.RequestException, ValueError):
+        return None
+
+
+def workday_jobs(name: str, sites: List[Dict[str, str]], today: date, logs: List[str]) -> List[Dict[str, Any]]:
+    """Norwegian vacancies in the employer's own Workday tenant, each dated from the tenant's own record."""
+    out: List[Dict[str, Any]] = []
+    for site in sites:
+        feed = workday_feed(site, logs)
+        if not feed:
+            continue
+        listed = sum(1 for j in feed if _NORWAY.search(str(j.get("locationsText") or "")))
+        details = 0
+        for job in feed:
+            if len(out) >= MAX_JOBS:
+                break
+            if not _NORWAY.search(str(job.get("locationsText") or "")):
+                continue
+            title = clean_job_title(_clean_title(str(job.get("title") or "")))
+            path = job.get("externalPath")
+            if not isinstance(path, str) or not path.startswith("/job/") or not valid_job_title(title):
+                continue
+            # The posting's own record is the proof: its country must be Norway, its start date is the publish date.
+            info = workday_detail(site, path)
+            details += 1
+            country = info.get("country") if isinstance(info, dict) else None
+            if isinstance(country, dict) and str(country.get("descriptor", "")).casefold() not in ("", "norway", "norge"):
+                continue
+            posted = parse_date(info.get("startDate")) if isinstance(info, dict) else None
+            link = info.get("externalUrl") if isinstance(info, dict) and isinstance(info.get("externalUrl"), str) \
+                else f"https://{site['host']}/{site['site']}{path}"
+            place = (info.get("location") if isinstance(info, dict) else None) or job.get("locationsText") or "Norway"
+            out.append({
+                "title": title,
+                "url": link,
+                "posted_at": posted.isoformat() if valid_publish_date(posted, today) else None,
+                "found_on": f"the employer's Workday tenant {site['host']}/{site['site']} (linked from {site['linked_from']})",
+                "source": f"Workday public job feed, location {place}",
+            })
+        if listed and not out:
+            logs.append(f"Website: Workday listed {listed} posting(s) in Norway for this employer but none had a usable role title.")
+        if details:
+            logs.append(f"Website: {details} Workday posting record(s) read from {site['host']}.")
+    return out
+
+
 def jobbnorge_jobs(name: str, employer_ids: List[str], today: date, logs: List[str]) -> List[Dict[str, Any]]:
     """Postings the employer itself published on Jobbnorge, matched by employer id or exact employer name."""
     wanted = employer_key(name)
@@ -1326,6 +1449,11 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
         # The employer link on the site is stronger proof than a name match, so it replaces those entries.
         jobs = [j for j in jobs if "exact employer name" not in j["source"]]
     jobs += jobbnorge_jobs(name, ids, today, logs)
+    # Employers that run their own Workday tenant link it from their careers page. The page itself is a JavaScript
+    # shell, so the tenant's public job feed is read instead, and only when the tenant host carries this name.
+    workday = workday_sites(pages + ([jobs_page] if jobs_page else []), name)
+    if workday:
+        jobs += workday_jobs(name, workday, today, logs)
     result["jobs"] = jobs
     publish_jobs(result)
     jobs = result["jobs"]

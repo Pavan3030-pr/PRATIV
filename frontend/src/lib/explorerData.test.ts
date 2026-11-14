@@ -138,7 +138,7 @@ describe('live registry fallback', () => {
     expect(fetchMock.mock.calls[0][0]).toContain('navn=telenor')
     // A Norwegian ASA ranks above a foreign registration of the same name.
     expect(rows.map((r) => r[1])).toEqual(['TELENOR ASA', 'TELENOR CDP AS', 'TELENOR FESTEKONTRAKTER AS', 'TELENOR A/S'])
-    expect(rows[0]).toEqual(['982463718', 'TELENOR ASA', 'Fornebu', 'ASA', 'Trådløs telekommunikasjon', 0, 1])
+    expect(rows[0]).toEqual(['982463718', 'TELENOR ASA', 'Fornebu', 'ASA', 'Trådløs telekommunikasjon', 0, 1, 9000])
   })
 
   it('looks up a 9-digit organisation number directly and ignores shorter queries', async () => {

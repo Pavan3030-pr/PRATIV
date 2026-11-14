@@ -5,8 +5,8 @@ import type { ExDoc } from '../../lib/explorerData'
 import { Explorer } from './Explorer'
 
 const index = [
-  ['984851006', 'DNB BANK ASA', 'Oslo', 'ASA', 'Banker', 1, 1],
-  ['923609016', 'EQUINOR ASA', 'Stavanger', 'ASA', 'Utvinning', 1, 1],
+  ['984851006', 'DNB BANK ASA', 'Oslo', 'ASA', 'Banker', 1, 1, 7334],
+  ['923609016', 'EQUINOR ASA', 'Stavanger', 'ASA', 'Utvinning', 1, 1, 21000],
 ]
 
 function doc(n: string, name: string, over: Partial<ExDoc> = {}): ExDoc {
@@ -141,7 +141,7 @@ describe('how it works page', () => {
     render(<Explorer />)
     expect(await screen.findByRole('heading', { name: 'How this works' })).toBeInTheDocument()
     expect(screen.getAllByText(/Enhetsregisteret/).length).toBeGreaterThan(0)
-    expect(screen.getByText(/browser-rendered ATS tenant \(Workday, SuccessFactors\)/)).toBeInTheDocument()
+    expect(screen.getByText(/another browser-rendered ATS \(SuccessFactors/)).toBeInTheDocument()
     expect(screen.getByText(/shared careers page/)).toBeInTheDocument()
     expect(screen.getByText(/never estimated/)).toBeInTheDocument()
   })

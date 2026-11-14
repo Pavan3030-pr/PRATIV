@@ -62,6 +62,7 @@ def dispatch(routes, web_fake):
 def run(pages, website="https://foo.no", name=NAME, cap=100, number=N):
     logs = []
     web._jobbnorge.update(at=None, jobs=[])     # one Jobbnorge read per test, never shared between them
+    web._workday.clear()                        # and one Workday feed read per test
     with patch("web.requests.get", side_effect=site(pages)) as get, patch("web.public_host", return_value=True):
         out = web.enrich(number, name, website, Sess(cap), lambda: None, logs, TODAY)
     out["get"], out["logs"] = get, logs
@@ -351,6 +352,41 @@ class JobTests(unittest.TestCase):
                          [("Platform Engineer – Core Automation",
                            "https://foo.com/career/open-positions/job-search-article.page?id=1")])
         self.assertIn("Foo Norge", r["jobs"][0]["source"])
+
+    def test_workday_tenant_feed_gives_norwegian_postings_with_the_tenants_own_date(self):
+        # Seen on equinor.com/careers -> equinor.wd3.myworkdayjobs.com/EQNR: the careers page is a JavaScript
+        # shell, but the tenant's own feed lists the postings and each posting record carries its start date.
+        home = f'<body>{FOOTER_OWN}<nav><a href="/careers">Careers</a></nav></body>'
+        careers = '<body><a href="https://foo.wd3.myworkdayjobs.com/FOO">Open positions</a></body>'
+        detail_url = "https://foo.wd3.myworkdayjobs.com/wday/cxs/foo/FOO/job/Oslo-Norway/Senior-Engineer_JR1"
+        feed = {"total": 4, "jobPostings": [
+            {"title": "Senior Engineer", "externalPath": "/job/Oslo-Norway/Senior-Engineer_JR1",
+             "locationsText": "Oslo, Norway", "postedOn": "Posted 3 Days Ago"},
+            {"title": "Junior Deal Handler", "externalPath": "/job/London-Great-Britain/Junior-Deal-Handler_JR2",
+             "locationsText": "London, Great Britain", "postedOn": "Posted 3 Days Ago"},
+            {"title": "Åpen søknad", "externalPath": "/job/Oslo-Norway/Open_JR3",
+             "locationsText": "Oslo, Norway", "postedOn": "Posted 1 Day Ago"},
+            {"title": "Prosjektleder", "externalPath": "/job/Aberdeen-Great-Britain/Prosjektleder_JR4",
+             "locationsText": "Aberdeen, Great Britain", "postedOn": "Posted 2 Days Ago"},
+        ]}
+        detail = {"jobPostingInfo": {"title": "Senior Engineer", "location": "Oslo, Norway", "startDate": "2026-10-20",
+                                        "externalUrl": "https://foo.wd3.myworkdayjobs.com/FOO/job/Oslo-Norway/Senior-Engineer_JR1",
+                                        "country": {"descriptor": "Norway"}}}
+        with patch("web.requests.post", return_value=Resp(200, json.dumps(feed))):
+            r = run({"https://foo.no": home, "https://foo.no/careers": careers, detail_url: json.dumps(detail)})
+        self.assertEqual([(j["title"], j["url"], j["posted_at"]) for j in r["jobs"]],
+                         [("Senior Engineer", detail["jobPostingInfo"]["externalUrl"], "2026-10-20")])
+        self.assertIn("Workday", r["jobs"][0]["source"])
+        self.assertIn("Oslo, Norway", r["jobs"][0]["source"])
+        self.assertEqual([e["key"] for e in r["items"] if e["key"].startswith("job_item_")], ["job_item_1"])
+
+    def test_another_employers_workday_tenant_is_not_read(self):
+        home = f'<body>{FOOTER_OWN}<nav><a href="/careers">Careers</a></nav></body>'
+        careers = '<body><a href="https://acme.wd3.myworkdayjobs.com/ACME">Open positions</a></body>'
+        with patch("web.requests.post") as post:
+            r = run({"https://foo.no": home, "https://foo.no/careers": careers})
+        self.assertEqual(r["jobs"], [])
+        post.assert_not_called()
 
     def test_one_vacancy_on_two_boards_is_one_row(self):
         # Seen on Byggmakker: its FINN ad and its Jobbnorge ad carry the same title.
