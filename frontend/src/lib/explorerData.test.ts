@@ -204,6 +204,18 @@ describe('data loading', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('treats a single-page app HTML answer as a missing profile, not a document', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response('<!doctype html>', { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }),
+        ),
+      ),
+    )
+    await expect(loadDoc('999999993')).rejects.toThrow('Company not found')
+  })
+
   it('reports an unavailable document without poisoning the cache', async () => {
     const fetchMock = vi
       .fn()

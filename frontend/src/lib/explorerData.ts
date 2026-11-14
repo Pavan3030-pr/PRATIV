@@ -68,7 +68,10 @@ export function loadDoc(org: string) {
   let p = docs.get(org)
   if (!p) {
     p = fetch(`/explore/c/${org}.json`).then((r) => {
-      if (!r.ok) throw new Error('Company not found in this dataset')
+      // A single-page host answers a missing file with the app's HTML and a 200, so the status alone
+      // cannot be trusted: a non-JSON body means this company has no crawled profile.
+      const type = r.headers.get('content-type') ?? ''
+      if (!r.ok || !type.includes('json')) throw new Error('Company not found in this dataset')
       return r.json() as Promise<ExDoc>
     })
     p.catch(() => docs.delete(org))
