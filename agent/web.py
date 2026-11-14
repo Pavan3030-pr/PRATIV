@@ -1075,6 +1075,94 @@ def dedupe_jobs(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out[:MAX_JOBS]
 
 
+# --------------------------------------------------------------------------- 4d. SuccessFactors
+# A SuccessFactors career site (jobs.yara.com) renders its landing page with categories only; its search URL,
+# /search/?q=&locationsearch=<country>, is rendered on the server and lists the postings with location and date.
+SF_POSTING = re.compile(r"^https?://(?P<host>[^/]+)/job/[^/?#]+/(?P<id>\d+)/?$", re.I)
+SF_TTL = 900
+_sf: Dict[str, Any] = {}
+
+
+def is_successfactors(page: Page) -> bool:
+    """A SuccessFactors career site marks itself with its j2w platform assets."""
+    return bool(re.search(r"(/j2w/|successfactors)", page.text or "", re.I))
+
+
+def successfactors_jobs(pages: List[Page], name: str, today: date, logs: List[str],
+                        budget: Optional["WebBudget"] = None) -> List[Dict[str, Any]]:
+    """Norwegian postings on the employer's own SuccessFactors career site, read from its country search.
+
+    Only a careers host linked from the company's own pages and carrying the company's name is read (a career
+    site is often a subdomain, jobs.yara.com), and only after its landing page has been fetched and identified
+    as a SuccessFactors site, so an ordinary /job/ link elsewhere is never mistaken for a career site.
+    """
+    hosts: List[str] = []
+    for page in pages:
+        for a in page.soup.find_all("a", href=True):
+            url = urljoin(page.url, html.unescape(a["href"]).strip())
+            host = host_of(url)
+            if not host or host in hosts or host == host_of(page.url) or not domain_matches_name(host, name):
+                continue
+            label = re.sub(r"\s+", " ", a.get_text(" ")).strip()
+            if JOB_HINT.search(urlparse(url).path or "") or JOB_HINT.search(label):
+                hosts.append(host)
+    out: List[Dict[str, Any]] = []
+    for host in hosts[:2]:
+        if len(out) >= MAX_JOBS:
+            break
+        landing = next((p for p in pages if host_of(p.url) == host), None)
+        if landing is None and budget is not None and budget.used < budget.limit:
+            landing = fetch(f"https://{host}/", budget, logs)
+        if landing is None or not is_successfactors(landing):
+            continue
+        now = datetime.now(timezone.utc)
+        cached = _sf.get(host)
+        if isinstance(cached, dict) and (now - cached["at"]).total_seconds() < SF_TTL:
+            out += cached["jobs"]
+            continue
+        search = f"https://{host}/search/?q=&locationsearch=Norway"
+        found: List[Dict[str, Any]] = []
+        if not robots_rules("https", host).allows(urlparse(search).path or "/"):
+            logs.append(f"Website: {search} is disallowed by {host}/robots.txt; the SuccessFactors search was skipped.")
+        else:
+            try:
+                resp = requests.get(search, headers=WEB_HEADERS, timeout=WEB_TIMEOUT)
+                if resp.status_code != 200:
+                    raise ValueError("no search page")
+                soup = BeautifulSoup(resp.text, "html.parser")
+                seen = set()
+                for a in soup.find_all("a", href=True):
+                    m = SF_POSTING.match(urljoin(search, html.unescape(a["href"]).strip()))
+                    if not m or m.group("id") in seen:
+                        continue
+                    title = clean_job_title(_clean_title(a.get_text(" ")))
+                    if not valid_job_title(title):
+                        continue
+                    row = a.find_parent("tr") or a.find_parent(["li", "article", "div"])
+                    loc_node = row.find(class_=re.compile(r"(^|\s)(colLocation|jobLocation)(\s|$)", re.I)) if row else None
+                    date_node = row.find(class_=re.compile(r"(^|\s)(colDate|jobDate)(\s|$)", re.I)) if row else None
+                    place = re.sub(r"\s+", " ", loc_node.get_text(" ")).strip() if loc_node else ""
+                    if place and not (_NORWAY.search(place) or re.search(r",\s*NO\b", place)):
+                        continue
+                    posted = parse_date(date_node.get_text(" ")) if date_node else None
+                    seen.add(m.group("id"))
+                    found.append({
+                        "title": title,
+                        "url": m.group(0),
+                        "posted_at": posted.isoformat() if valid_publish_date(posted, today) else None,
+                        "found_on": search,
+                        "source": f"SuccessFactors career site of the employer, Norway search (location {place or 'Norway'})",
+                    })
+                    if len(found) >= MAX_JOBS:
+                        break
+                logs.append(f"Website: the SuccessFactors search at {host} listed {len(found)} Norwegian posting(s).")
+            except (requests.RequestException, ValueError):
+                logs.append(f"Website: the SuccessFactors search at {host} could not be read; its postings were skipped.")
+        _sf[host] = {"at": now, "jobs": found}
+        out += found
+    return out[:MAX_JOBS]
+
+
 # --------------------------------------------------------------------------- 4b. Jobbnorge
 # Jobbnorge's own search page is a JavaScript shell: fetched as HTML it lists nothing. Their search page reads
 # publicapi.jobbnorge.no/v3/jobs, a public JSON feed that carries employerID, employer name, title, link and
@@ -1433,6 +1521,7 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
     # A group that publishes vacancies on a shared careers site (telenor.no -> telenor.com) keeps the company's own
     # host free of postings. Read that page only when its host carries the company's name, and only postings that
     # live on that same host, so nothing from an agency or a sister brand slips in.
+    group_page = None
     if sum(1 for j in jobs if j.get("url")) < 3:
         group_url = find_group_careers_page(([jobs_page] if jobs_page else []) + pages, site_url, name)
         if group_url and budget.used < budget.limit:
@@ -1442,6 +1531,9 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
                 jobs += found
                 logs.append(f"Website: the company's careers page sent us to {host_of(group_page.url)}, where "
                             f"{len(found)} posting(s) for a Norwegian unit of the group are listed.")
+    # A SuccessFactors career site linked from the company lists its postings only on its own country search.
+    jobs += successfactors_jobs(pages + ([jobs_page] if jobs_page else []) + ([group_page] if group_page else []),
+                                name, today, logs, budget)
     # Jobbnorge postings are published by the employer on a job board, not on its own site. Read the board's
     # public JSON feed rather than the JavaScript page, matching this employer by id or by exact employer name.
     ids = jobbnorge_employer_ids(pages + ([jobs_page] if jobs_page else []))

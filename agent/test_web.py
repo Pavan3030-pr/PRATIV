@@ -388,6 +388,39 @@ class JobTests(unittest.TestCase):
         self.assertEqual(r["jobs"], [])
         post.assert_not_called()
 
+    def test_successfactors_career_site_is_read_from_its_norway_search(self):
+        # Seen on yara.com/careers -> jobs.yara.com: the landing page lists categories, and only the career
+        # site's own country search renders the postings. Titles, location and date come from that page.
+        home = f'<body>{FOOTER_OWN}<nav><a href="/careers">Careers</a></nav></body>'
+        careers = '<body><a href="https://jobs.foo.com/">Jobs</a></body>'
+        landing = ('<html><head><link href="/platform/css/j2w/min/BS3ColumnizedSearch.min.css" rel="stylesheet">'
+                   '</head><body><a href="/go/Engineering/9334001/">Engineering</a></body></html>')
+        search = ('<html><body><table>'
+                  '<tr class="data-row"><td class="colTitle"><span class="jobTitle">'
+                  '<a class="jobTitle-link" href="/job/Oslo-Senior-Software-Engineer/1454658533/">Senior Software Engineer</a>'
+                  '</span></td><td class="colLocation">Oslo, NO</td><td class="colDate">Oct 5, 2026</td></tr>'
+                  '<tr class="data-row"><td class="colTitle">'
+                  '<a class="jobTitle-link" href="/job/Le-Havre-Technicien-Laboratoire/1447156933/">Technicien Laboratoire</a>'
+                  '</td><td class="colLocation">Le Havre, FR</td><td class="colDate">Nov 2, 2026</td></tr>'
+                  '<tr class="data-row"><td class="colTitle">'
+                  '<a class="jobTitle-link" href="/job/Oslo-Karriere/1450000000/">Karriere</a>'
+                  '</td><td class="colLocation">Oslo, NO</td><td class="colDate">Nov 1, 2026</td></tr>'
+                  '</table></body></html>')
+        r = run({"https://foo.no": home, "https://foo.no/careers": careers, "https://jobs.foo.com/": landing,
+                 "https://jobs.foo.com/search/?q=&locationsearch=Norway": search})
+        self.assertEqual([(j["title"], j["url"], j["posted_at"]) for j in r["jobs"]],
+                         [("Senior Software Engineer",
+                           "https://jobs.foo.com/job/Oslo-Senior-Software-Engineer/1454658533/", "2026-10-05")])
+        self.assertIn("SuccessFactors", r["jobs"][0]["source"])
+
+    def test_a_plain_careers_host_is_not_read_as_a_successfactors_search(self):
+        home = f'<body>{FOOTER_OWN}<nav><a href="/careers">Careers</a></nav></body>'
+        careers = '<body><a href="https://jobs.foo.com/">Jobs</a></body>'
+        r = run({"https://foo.no": home, "https://foo.no/careers": careers,
+                 "https://jobs.foo.com/": '<body><a href="/job/a-senior-role/123/">Senior role</a></body>',
+                 "https://jobs.foo.com/search/?q=&locationsearch=Norway": '<body></body>'})
+        self.assertEqual(r["jobs"], [])
+
     def test_one_vacancy_on_two_boards_is_one_row(self):
         # Seen on Byggmakker: its FINN ad and its Jobbnorge ad carry the same title.
         items = [

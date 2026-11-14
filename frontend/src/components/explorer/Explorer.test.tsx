@@ -141,7 +141,7 @@ describe('how it works page', () => {
     render(<Explorer />)
     expect(await screen.findByRole('heading', { name: 'How this works' })).toBeInTheDocument()
     expect(screen.getAllByText(/Enhetsregisteret/).length).toBeGreaterThan(0)
-    expect(screen.getByText(/another browser-rendered ATS \(SuccessFactors/)).toBeInTheDocument()
+    expect(screen.getByText(/ATS that renders solely in the browser/)).toBeInTheDocument()
     expect(screen.getByText(/shared careers page/)).toBeInTheDocument()
     expect(screen.getByText(/never estimated/)).toBeInTheDocument()
   })

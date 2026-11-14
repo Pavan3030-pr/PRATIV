@@ -718,8 +718,8 @@ function About({ index }: { index: IndexRow[] | null }) {
           <li>
             <span className="font-medium text-ink">Recognised job boards</span> — postings linked from the verified site,
             including Teamtailor, Recruitee, Webcruiter, Jobbnorge, EasyCruit and FINN, the employer’s own Workday tenant
-            (read from its public job feed), plus the group’s shared careers page when the company’s own host sends visitors
-            there. A vacancy on a shared page counts only when its card names a Norwegian unit of the group (“Telenor
+            (read from its public job feed) and its SuccessFactors career site (read from the country search that site
+            renders), plus the group’s shared careers page when the company’s own host sends visitors there. A vacancy on a shared page counts only when its card names a Norwegian unit of the group (“Telenor
             Norge”, not “Telenor Danmark”), and the item states the hiring unit.
           </li>
         </ul>
@@ -746,9 +746,9 @@ function About({ index }: { index: IndexRow[] | null }) {
         <h2 className={h2}>Known limits</h2>
         <ul className="grid gap-1.5 text-[14px] leading-relaxed text-graphite">
           <li>Jobbnorge and Workday are read from the public feeds their pages call, not from the page, and a Workday tenant
-            is only read when the company’s own site links it and the tenant host carries its name. Employers whose vacancies
-            live only in another browser-rendered ATS (SuccessFactors, Workday tenants that answer with a maintenance page)
-            still show no postings. Only postings in Norway are published.</li>
+            or SuccessFactors career site is only read when the company’s own site links it and its host carries the
+            company’s name. Employers whose vacancies live only in an ATS that renders solely in the browser, or whose
+            careers site answers with a maintenance page, still show no postings. Only postings in Norway are published.</li>
           <li>Companies that registered no website, or whose site is unreachable, show no website-derived facts.</li>
           <li>News rendered client-side is not read; only server-rendered posts with a real publish date are published.</li>
         </ul>
