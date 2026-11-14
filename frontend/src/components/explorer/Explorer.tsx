@@ -715,7 +715,9 @@ function About({ index }: { index: IndexRow[] | null }) {
           </li>
           <li>
             <span className="font-medium text-ink">Recognised job boards</span> — postings linked from the verified site,
-            including Teamtailor, Recruitee, Webcruiter, Jobbnorge, EasyCruit and FINN.
+            including Teamtailor, Recruitee, Webcruiter, Jobbnorge, EasyCruit and FINN, plus the group’s shared careers page
+            when the company’s own host sends visitors there. A vacancy on a shared page counts only when its card names a
+            Norwegian unit of the group (“Telenor Norge”, not “Telenor Danmark”), and the item states the hiring unit.
           </li>
         </ul>
       </section>
@@ -740,7 +742,8 @@ function About({ index }: { index: IndexRow[] | null }) {
       <section className={section}>
         <h2 className={h2}>Known limits</h2>
         <ul className="grid gap-1.5 text-[14px] leading-relaxed text-graphite">
-          <li>Employers whose vacancies live only on a JavaScript-only board (Jobbnorge, Workday) show no postings.</li>
+          <li>Jobbnorge is read from the public feed its search page calls, not from the page. Employers whose vacancies live
+            only in a browser-rendered ATS tenant (Workday, SuccessFactors) still show no postings.</li>
           <li>Companies that registered no website, or whose site is unreachable, show no website-derived facts.</li>
           <li>News rendered client-side is not read; only server-rendered posts with a real publish date are published.</li>
         </ul>

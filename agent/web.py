@@ -1044,13 +1044,15 @@ def publish_jobs(result: Dict[str, Any]) -> None:
     result["items"] = [it for it in result["items"] if not str(it.get("key", "")).startswith("job_item_")]
     for i, it in enumerate(result["jobs"], 1):
         when = it.get("posted_at") or "open / undated"
+        read = (f"title, employer and date read from {it['found_on']}" if it.get("posted_at") else
+                f"title and employer read from {it['found_on']}; the page shows no publish date")
         result["items"].append({
             "key": f"job_item_{i}",
             "value": f"{when} {it['title']}",
             "snippet": f"{when}: {it['title']}",
             "url": it["url"],
             "path": it["source"],
-            "why": f"{it['source']}; title, employer and date read from {it['found_on']}, nothing inferred.",
+            "why": f"{it['source']}; {read}, nothing inferred.",
         })
 
 
