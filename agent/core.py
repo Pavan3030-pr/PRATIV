@@ -359,3 +359,417 @@ def _optional(url, sess, logs, label, params=None):
         logs.append(f"{label}: response was not valid JSON; related fields left empty.")
         return None, f"{label} returned invalid JSON"
     return body, None
+
+
+def crawl(company_number: str, store: Optional[SnapshotStore] = None,
+          budget: Optional[RequestBudget] = None, now: Optional[str] = None,
+          enrich_web: bool = True) -> Dict[str, Any]:
+    n = company_number
+    sess = Session(budget or BUDGET)
+    ts = now or now_iso()
+    logs = [f"STEP 1: Received organization number '{n}'."]
+    if not is_valid_norwegian_org_number(n):
+        raise CrawlError(400, f"Invalid company number '{n}'. Must be 9 digits with a valid Modulus 11 check digit.")
+    checks = [{"check": "organisation_number_checksum", "passed": True,
+               "detail": "9 digits and Modulus 11 check digit are valid."}]
+    logs.append("STEP 1b: 9-digit format and Modulus 11 check digit validated.")
+
+    src_main = f"{ENHETER}/{n}"
+    logs.append(f"STEP 2: GET {src_main}")
+    try:
+        resp = http_get(src_main, sess)
+    except Unavailable as exc:
+        logs.append(f"STEP 2 (UNAVAILABLE): {exc}; no profile facts were generated.")
+        raise CrawlError(503, "Brreg registry is temporarily unavailable.") from exc
+    if resp.status_code == 404:
+        raise CrawlError(404, "No Brreg company record exists for this organization number.")
+    if resp.status_code == 410:
+        raise CrawlError(410, "This organization has been removed from the Brreg register.")
+    if resp.status_code != 200:
+        raise CrawlError(503, "Brreg registry returned an unavailable response.")
+    data = _json(resp)
+    if not isinstance(data, dict):
+        raise CrawlError(502, "Brreg returned an invalid company record.")
+    if str(data.get("organisasjonsnummer")) != n:
+        raise CrawlError(502, "Brreg response organization number did not match the request.")
+    name = _text(data.get("navn"))
+    if not name:
+        raise CrawlError(502, "Brreg response did not include a legal name.")
+    checks.append({"check": "enhetsregisteret_orgnr_matches_request", "passed": True,
+                   "detail": "organisasjonsnummer in the registry response equals the requested number."})
+    logs.append(f"STEP 3: Official record fetched for '{name}'; organization number matches the request.")
+
+    items: List[Dict[str, Any]] = []
+    missing: Dict[str, str] = {}
+    stale: List[str] = []   # keys whose source was unreachable this run (not "no data"): never reported as changed
+    unavailable: List[str] = []
+
+    def add(key, value, snippet, url, path, why):
+        items.append({"key": key, "value": value, "snippet": snippet, "url": url, "path": path, "why": why})
+
+    base_why = f"Read '{{p}}' directly from the Enhetsregisteret response for {n}; its organisasjonsnummer matched the request."
+    add("official_legal_name", name, f"Legal name '{name}' returned by Brreg for organization number {n}.",
+        src_main, "navn", base_why.format(p="navn"))
+    form_code, form_desc = dig(data, "organisasjonsform", "kode"), dig(data, "organisasjonsform", "beskrivelse")
+    if form_code or form_desc:
+        form = f"{form_desc} ({form_code})" if form_code and form_desc else str(form_code or form_desc)
+        add("organisation_form", form, f"Organisation form: {form}", src_main, "organisasjonsform", base_why.format(p="organisasjonsform"))
+    else:
+        missing["organisation_form"] = "No organisation form in the registry response."
+    addr_key = "forretningsadresse" if address_text(data.get("forretningsadresse")) else "postadresse"
+    address = address_text(data.get(addr_key))
+    if address:
+        add("registered_address", address, address, src_main, addr_key, base_why.format(p=addr_key))
+    else:
+        missing["registered_address"] = "No business or postal address registered."
+    if _text(data.get("stiftelsesdato")):
+        add("incorporation_date", data["stiftelsesdato"], data["stiftelsesdato"], src_main, "stiftelsesdato", base_why.format(p="stiftelsesdato"))
+    else:
+        missing["incorporation_date"] = "No founding date registered in Enhetsregisteret."
+    ind_code, ind_desc = dig(data, "naeringskode1", "kode"), dig(data, "naeringskode1", "beskrivelse")
+    if ind_code or ind_desc:
+        industry = " ".join(str(x) for x in (ind_code, ind_desc) if x)
+        add("industry", industry, f"Industry (NACE): {industry}", src_main, "naeringskode1", base_why.format(p="naeringskode1"))
+    else:
+        missing["industry"] = "No industry code registered."
+    if isinstance(data.get("antallAnsatte"), int) and not isinstance(data.get("antallAnsatte"), bool):
+        add("employees", data["antallAnsatte"], f"Registered employees: {data['antallAnsatte']}", src_main, "antallAnsatte", base_why.format(p="antallAnsatte"))
+    else:
+        missing["employees"] = "No employee count registered in Enhetsregisteret."
+    if _text(data.get("hjemmeside")):
+        add("website", data["hjemmeside"].strip(), f"Website: {data['hjemmeside'].strip()}", src_main, "hjemmeside", base_why.format(p="hjemmeside"))
+    else:
+        missing["website"] = "No website registered in Enhetsregisteret."
+    if isinstance(data.get("registrertIMvaregisteret"), bool):
+        vat = data["registrertIMvaregisteret"]
+        add("vat_registered", vat, f"Registered in the VAT register: {'yes' if vat else 'no'}", src_main, "registrertIMvaregisteret", base_why.format(p="registrertIMvaregisteret"))
+    else:
+        missing["vat_registered"] = "VAT registration status not stated."
+    sec_code, sec_desc = dig(data, "institusjonellSektorkode", "kode"), dig(data, "institusjonellSektorkode", "beskrivelse")
+    if sec_code or sec_desc:
+        sector = " ".join(str(x) for x in (sec_code, sec_desc) if x)
+        add("institutional_sector", sector, f"Institutional sector: {sector}", src_main, "institusjonellSektorkode", base_why.format(p="institusjonellSektorkode"))
+    else:
+        missing["institutional_sector"] = "No institutional sector code registered."
+    flags = {k: data.get(k) for k in ("konkurs", "underAvvikling", "underTvangsavviklingEllerTvangsopplosning")}
+    if _text(data.get("slettedato")):
+        status = f"deleted {data['slettedato']}"
+    elif flags["konkurs"]:
+        status = "bankrupt"
+    elif flags["underAvvikling"]:
+        status = "under liquidation"
+    elif flags["underTvangsavviklingEllerTvangsopplosning"]:
+        status = "under forced dissolution"
+    elif any(isinstance(v, bool) for v in flags.values()):
+        status = "active (no bankruptcy or liquidation flags set)"
+    else:
+        status = None
+    if status:
+        add("company_status", status, f"Status: {status}", src_main, "konkurs,underAvvikling,underTvangsavviklingEllerTvangsopplosning,slettedato",
+            f"Derived only from the registry's own boolean flags and deletion date for {n}.")
+    else:
+        missing["company_status"] = "The registry response carried no status flags."
+    logs.append(f"STEP 4: Extracted {len(items)} registry fact(s) from Enhetsregisteret; {len(missing)} not registered.")
+
+    src_roles = f"{ENHETER}/{n}/roller"
+    roles, why = _optional(src_roles, sess, logs, "Roles register")
+    if roles is not None:
+        manager, chair, board = parse_roles(roles)
+        rwhy = f"Read active (not resigned) roles from the roles endpoint scoped to {n}; person data limited to name."
+        if manager:
+            add("general_manager", manager, f"General manager (DAGL): {manager}", src_roles, "rollegrupper[].roller[type=DAGL]", rwhy)
+        else:
+            missing["general_manager"] = "No active general manager (DAGL) role is registered."
+        if chair:
+            add("chair", chair, f"Chair of the board (LEDE): {chair}", src_roles, "rollegrupper[].roller[type=LEDE]", rwhy)
+        else:
+            missing["chair"] = "No active board chair (LEDE) role is registered."
+        if board:
+            add("board_member_count", board, f"Active board members (chair, deputy, members): {board}", src_roles, "rollegrupper[].roller[type in LEDE,NEST,MEDL]", rwhy)
+        else:
+            missing["board_member_count"] = "No active board roles registered (e.g. sole proprietorships have none)."
+        logs.append(f"STEP 5: Roles register read; manager={'yes' if manager else 'no'}, chair={'yes' if chair else 'no'}, board members={board}.")
+    else:
+        for k in SOURCE_GROUPS["roles"]:
+            missing[k] = "No roles on record." if why == "not_found" else why
+        if why != "not_found":
+            stale += SOURCE_GROUPS["roles"]
+            unavailable.append("roles")
+
+    src_sub = f"{UNDERENHETER}?overordnetEnhet={n}"
+    subs, why = _optional(UNDERENHETER, sess, logs, "Sub-unit register", params={"overordnetEnhet": n, "size": 5})
+    sample: List[Dict[str, Any]] = []
+    if subs is not None:
+        listed = (subs.get("_embedded") or {}).get("underenheter") or [] if isinstance(subs, dict) else []
+        own = [u for u in listed if isinstance(u, dict) and str(u.get("overordnetEnhet")) == n]
+        foreign = len(listed) - len(own)
+        checks.append({"check": "subunits_belong_to_requested_parent", "passed": foreign == 0,
+                       "detail": f"{foreign} sub-unit(s) with a different parent were discarded, none published."})
+        total = dig(subs, "page", "totalElements")
+        count = total if isinstance(total, int) and foreign == 0 else len(own)
+        sample = [{"organisasjonsnummer": u.get("organisasjonsnummer"), "navn": u.get("navn")} for u in own]
+        add("subunit_count", count, f"Registered sub-units (underenheter): {count}", src_sub, "page.totalElements",
+            f"Count returned by the sub-unit endpoint filtered on parent {n}; each listed unit's overordnetEnhet was checked.")
+        logs.append(f"STEP 6: Sub-unit register read; {count} sub-unit(s).")
+    else:
+        missing["subunit_count"] = "No sub-unit data." if why == "not_found" else why
+        if why != "not_found":
+            stale += SOURCE_GROUPS["subunits"]
+            unavailable.append("subunits")
+
+    src_acc = f"{REGNSKAP}/{n}"
+    accounts, why = _optional(src_acc, sess, logs, "Annual accounts register")
+    financials = None
+    if accounts is not None:
+        best, foreign = pick_accounts(accounts, n)
+        checks.append({"check": "accounts_belong_to_requested_company", "passed": foreign == 0,
+                       "detail": f"{foreign} account record(s) for other organisations were discarded, none published."})
+        if best is None:
+            for k in ("financial_revenue", "operating_result", "net_profit"):
+                missing[k] = "No annual accounts for this company in Regnskapsregisteret."
+        else:
+            period = best.get("regnskapsperiode") or {}
+            cur = _text(best.get("valuta")) or "NOK"
+            acct_type = best.get("regnskapstype") or "unspecified"
+            res = best.get("resultatregnskapResultat")
+            vals = {"financial_revenue": ("Operating revenue", to_number(dig(res, "driftsresultat", "driftsinntekter", "sumDriftsinntekter")), "resultatregnskapResultat.driftsresultat.driftsinntekter.sumDriftsinntekter"),
+                    "operating_result": ("Operating result", to_number(dig(res, "driftsresultat", "driftsresultat")), "resultatregnskapResultat.driftsresultat.driftsresultat"),
+                    "net_profit": ("Net result for the year", to_number(dig(res, "aarsresultat")), "resultatregnskapResultat.aarsresultat")}
+            label = f"period {period.get('fraDato', '?')} to {period.get('tilDato', '?')}, {acct_type} accounts"
+            financials = {"period_start": period.get("fraDato"), "period_end": period.get("tilDato"), "currency": cur,
+                          "account_type": acct_type, "source_url": src_acc, "history": account_history(accounts, n)}
+            for key, (title, num, path) in vals.items():
+                if num is None:
+                    missing[key] = f"The latest filed accounts ({label}) do not report this figure."
+                    continue
+                text = f"{cur} {num:,}".replace(",", " ")
+                shown = f"{text} (FY ending {period.get('tilDato', 'unknown')})"
+                financials[{"financial_revenue": "revenue", "operating_result": "operating_result", "net_profit": "net_result"}[key]] = num
+                add(key, shown, f"{title}: {text} ({label})", src_acc, path,
+                    f"Read '{path}' from the latest Regnskapsregisteret filing whose virksomhet.organisasjonsnummer equals {n}; reported as filed, not recalculated.")
+            logs.append(f"STEP 7: Annual accounts read for period ending {period.get('tilDato', 'unknown')}.")
+    else:
+        for k in SOURCE_GROUPS["accounts"]:
+            missing[k] = "No annual accounts filed in Regnskapsregisteret." if why == "not_found" else why
+        if why != "not_found":
+            stale += SOURCE_GROUPS["accounts"]
+            unavailable.append("accounts")
+    # ---- website: ownership check, social links, news (agent/web.py) -------------------------------------
+    registry_site = data.get("hjemmeside")
+    web_out: Optional[Dict[str, Any]] = None
+    web_items: List[Dict[str, Any]] = []
+    social_links: List[Dict[str, Any]] = []
+    news: List[Dict[str, Any]] = []
+    jobs: List[Dict[str, Any]] = []
+    web_why = None
+    if enrich_web and web is not None:
+        # The registry website is a claim like any other: it is published only after the site itself
+        # proves it belongs to this company (name or organisation number). A parent, sister or brand
+        # site is reported in missing_fields instead of being asserted as this company's website.
+        # It is called even without a website, because job postings the employer published on a job
+        # board are readable from the board itself and do not depend on the company's own site.
+        items[:] = [i for i in items if i["key"] != "website"]
+        try:
+            web_out = web.enrich(n, name, registry_site, sess, _throttle, logs)
+        except CrawlError as exc:           # run-wide request budget used up
+            web_why = f"Website not read ({exc.detail})"
+            logs.append(f"Website: {web_why}; social links, news and jobs left empty.")
+        except Exception as exc:            # a malformed page must never cost the registry profile
+            web_why = f"Website check failed ({exc.__class__.__name__})"
+            logs.append(f"Website: {web_why}; social links, news and jobs left empty.")
+    elif _text(registry_site) and not enrich_web:
+        web_why = "Website not checked in this run (time budget)"
+    if web_out is not None:
+        site = web_out["website"]
+        items[:] = [i for i in items if i["key"] != "website"]
+        if site["status"] == "verified":
+            web_items = web_out["items"]
+            items.append(web_items.pop(0))                   # the website fact itself belongs to the profile
+            social_links = web_out["social_links"]
+            news = web_out["news"]
+            jobs = web_out.get("jobs") or []
+            if not social_links:
+                missing["social_links"] = "No social account linked on the verified site has a handle matching this company's name or domain."
+            if not news:
+                missing["news"] = "No real, dated news post (publish date, own page) was found on the verified site."
+            if not jobs:
+                missing["jobs"] = ("No open or dated job posting was found on the verified company site or under this "
+                                   "employer's name on Jobbnorge.")
+        elif site["status"] == "not_verified":
+            missing["website"] = site["reason"]
+            missing["social_links"] = missing["news"] = "Registry website is not verified as this company's own (possible parent, sister or brand site)."
+            jobs = web_out.get("jobs") or []
+            if not jobs:
+                missing["jobs"] = ("Registry website is not verified as this company's own, and no Jobbnorge posting "
+                                   "was published under this employer's registered name.")
+        elif site["status"] == "unreachable":
+            missing["website"] = (f"The registry lists '{str(registry_site).strip()}', but the site could not be reached, so "
+                                  "ownership is unproven and it is not published as this company's website.")
+            missing["social_links"] = missing["news"] = "Website unreachable this run."
+            jobs = web_out.get("jobs") or []
+            if not jobs:
+                missing["jobs"] = "Website unreachable this run, and no Jobbnorge posting was published under this employer's registered name."
+            stale += SOURCE_GROUPS["website"]
+            unavailable.append("website")
+        elif site["status"] == "no_website":
+            missing["website"] = "No website registered in Enhetsregisteret."
+            missing["social_links"] = missing["news"] = "No website registered, so this was not searched."
+            jobs = web_out.get("jobs") or []
+            if not jobs:
+                missing["jobs"] = "No website registered and no Jobbnorge posting was published under this employer's registered name."
+        else:
+            missing["website"] = "The registry's website value is not a usable web address."
+            missing["social_links"] = missing["news"] = "No usable website."
+            jobs = web_out.get("jobs") or []
+            if not jobs:
+                missing["jobs"] = "No usable website, and no Jobbnorge posting was published under this employer's registered name."
+    elif web_why:
+        missing["website"] = f"The registry lists '{str(registry_site).strip()}', but ownership could not be verified ({web_why})."
+        missing["social_links"] = missing["news"] = missing["jobs"] = web_why
+        if enrich_web:
+            stale += SOURCE_GROUPS["website"]
+            unavailable.append("website")
+    else:
+        missing.setdefault("social_links", "No website registered, so no social links were searched.")
+        missing.setdefault("news", "No website registered, so no news was searched.")
+        missing.setdefault("jobs", "No website registered and no Jobbnorge posting was published under this employer's registered name.")
+    if jobs and web_out:
+        # Postings are published even when the registry site is unverified (Jobbnorge employer match), so their
+        # per-item evidence must travel with them in every branch, not only the verified one.
+        have = {i["key"] for i in web_items}
+        web_items += [i for i in web_out["items"] if str(i["key"]).startswith("job_item_") and i["key"] not in have]
+    evidences = [{"target_metric_key": i["key"], "extracted_text_snippet": i["snippet"], "source_url_link": i["url"],
+                  "crawl_timestamp": ts, "explanation_chain": i["why"], "field_path": i["path"],
+                  "value_sha256": sha(i["value"])} for i in items + web_items]
+    facts = {i["key"]: i["value"] for i in items}
+    if social_links:
+        facts["social_links"] = {s["platform"]: s["url"] for s in social_links}
+    if news:
+        facts["news"] = [{k: it[k] for k in ("title", "url", "published_at")} for it in news]
+    if jobs:
+        facts["jobs"] = [{"title": j["title"], "url": j["url"], "posted_at": j.get("posted_at"),
+                          **({"origin": j["origin"]} if j.get("origin") else {})} for j in jobs]
+    if web_out and web_out["website"]["verified"]:
+        facts["website_verified_by"] = web_out["website"]["verified_by"]
+    if sample:
+        facts["subunit_sample"] = sample
+    payload = registry_payload(data)
+    prev = store.get(n) if store else None
+    stored = dict(facts)   # what we compare and remember: fresh facts + last known values of unreachable sources
+    for k in stale:
+        if prev and prev.get("facts") and k in prev["facts"] and k not in stored:
+            stored[k] = prev["facts"][k]
+    reg_hash, content_hash = sha(payload), sha(stored)
+    update = detect_update(prev, payload, reg_hash, stored, content_hash, ts)
+    update["sources_unavailable"] = unavailable
+    if store:
+        store.put(n, {"registry_payload": payload, "registry_hash": reg_hash, "facts": stored, "content_hash": content_hash,
+                      "first_seen_at": (prev or {}).get("first_seen_at") or ts, "last_checked_at": ts,
+                      "last_changed_at": update["last_changed_at"], "checks": (prev or {}).get("checks", 0) + 1, "baseline": False})
+    logs.append(f"STEP 8: registry hash {reg_hash[:12]}..., content hash {content_hash[:12]}...; update status: {update['status']}.")
+    found = [k for k in EXPECTED if k in facts]
+    logs.append(f"STEP 9: {len(found)}/{len(EXPECTED)} expected fields found with evidence; {sess.calls} outbound request(s).")
+    return {
+        "company_number": n, "official_legal_name": name, "registered_address": address,
+        "incorporation_date": facts.get("incorporation_date"), "financial_revenue": facts.get("financial_revenue"),
+        "net_profit": facts.get("net_profit"), "delta_sync_hash": reg_hash, "content_hash": content_hash,
+        "explainability_logs": logs, "lineage_evidences": evidences, "profile": facts, "financials": financials,
+        "update": update, "match_checks": checks, "match_verified": all(c["passed"] for c in checks),
+        "missing_fields": missing,
+        "coverage": {"found": len(found), "expected": len(EXPECTED), "missing": [k for k in EXPECTED if k not in facts]},
+        "summary": build_summary(n, facts, financials, ts, jobs), "requests_used": sess.calls,
+        "website": (web_out or {}).get("website") or ({"registry_url": None, "status": "no_website", "verified": False, "reason": "The registry lists no website for this company."}
+                    if not _text(registry_site) else
+                    {"registry_url": registry_site, "status": "not_checked", "verified": False, "reason": web_why or "Website check was skipped."}),
+        "social_links": social_links, "news": news, "jobs": jobs,
+    }
+
+
+def normalize_registry_site(raw: Any) -> str:
+    return (web.normalize_url(raw) if web else None) or str(raw).strip()
+
+
+JOB_WHERE = {
+    "company_site": "listed on its own careers page",
+    "linked_from_company_site": "on a recruitment site that its own careers page links to",
+    "job_board_name_match": "on Jobbnorge, published under its exact registered employer name",
+    "group_site": "on its group's careers page, under this exact employer name",
+}
+JOB_ORIGIN_RANK = {"company_site": 0, "linked_from_company_site": 1, "group_site": 2, "job_board_name_match": 3}
+
+
+def best_job(jobs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The posting a buyer should see first: dated before undated, then the one hosted closest to the company."""
+    usable = [j for j in jobs if j.get("title") and j.get("url")]
+    if not usable:
+        return None
+    return min(usable, key=lambda j: (not j.get("posted_at"), JOB_ORIGIN_RANK.get(j.get("origin"), 4)))
+
+
+def build_summary(n: str, f: Dict[str, Any], fin: Optional[Dict[str, Any]], ts: str,
+                  jobs: Optional[List[Dict[str, Any]]] = None) -> str:
+    """One sourced fact a buyer wants comes first, in this order: filed revenue, an open role, a dated news post,
+    headcount, the manager or chair to contact. A registry field alone (industry code, address) only leads when nothing else exists."""
+    name = f.get("official_legal_name") or f"Org. {n}"
+    has_rev = bool(fin and "financial_revenue" in f)
+    job = best_job(jobs if jobs is not None else f.get("jobs") or [])
+    news = (f.get("news") or [None])[0]
+    parts: List[str] = []
+    used = None
+
+    if has_rev:
+        used = "revenue"
+        parts.append(
+            f"{name} reported revenue of {f['financial_revenue'].split(' (')[0]} "
+            f"for the period ending {fin.get('period_end')} "
+            f"(Brønnøysund Regnskapsregisteret, retrieved {ts})."
+        )
+    elif job:
+        used = "job"
+        when = f" (posted {job['posted_at']})" if job.get("posted_at") else ""
+        where = JOB_WHERE.get(job.get("origin"), "")
+        parts.append(
+            f"{name} has an open role “{job['title']}”{when}"
+            + (f" {where}" if where else "")
+            + f" ({job['url']}, retrieved {ts})."
+        )
+    elif news:
+        used = "news"
+        parts.append(
+            f"{name} published a dated news post on {news['published_at']}: “{news['title']}” "
+            f"({news['url']}, retrieved {ts})."
+        )
+    elif "employees" in f:
+        used = "employees"
+        parts.append(f"{name} has {f['employees']} registered employees (Enhetsregisteret, retrieved {ts}).")
+    elif "general_manager" in f:
+        used = "general_manager"
+        parts.append(f"{name} is led by general manager {f['general_manager']} "
+                     f"(Enhetsregisteret roles register, retrieved {ts}).")
+    elif "chair" in f:
+        used = "chair"
+        parts.append(f"{name} is chaired by {f['chair']} (Enhetsregisteret roles register, retrieved {ts}).")
+    elif "industry" in f:
+        used = "industry"
+        parts.append(f"{name} operates in {f['industry']} (Enhetsregisteret, retrieved {ts}).")
+    else:
+        parts.append(f"{name} is a registered Norwegian organisation (Enhetsregisteret, retrieved {ts}).")
+
+    if "company_status" in f:
+        parts.append(f"Status: {f['company_status']}.")
+    lead = []
+    if "general_manager" in f and used != "general_manager":
+        lead.append(f"GM {f['general_manager']}")
+    if "chair" in f and used != "chair":
+        lead.append(f"chair {f['chair']}")
+    if lead:
+        parts.append("Leadership: " + ", ".join(lead) + ".")
+    if news and used not in ("news",):
+        parts.append(f"Latest dated news: {news['published_at']} – {news['title']}.")
+    if job and used != "job":
+        parts.append(f"Also hiring: “{job['title']}” ({job['url']}).")
+    elif job and jobs and len(jobs) > 1:
+        parts.append(f"{len(jobs)} open postings are listed in total.")
+    if not has_rev:
+        parts.append("No filed revenue figure exists for this company; none is estimated.")
+    return " ".join(parts)

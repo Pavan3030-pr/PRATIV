@@ -127,6 +127,7 @@ def main(argv=None):
         "website_status_counts": {st: sum(1 for r in ok if r["website"]["status"] == st) for st in sorted({r["website"]["status"] for r in ok})},
         "companies_with_verified_social": sum(1 for r in ok if r["social_links"]),
         "companies_with_dated_news": sum(1 for r in ok if r["news"]),
+        "companies_with_job_postings": sum(1 for r in ok if r.get("jobs")),
         "wrong_company_checks_all_passed": sum(1 for r in ok if r["match_verified"]),
     }
     (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

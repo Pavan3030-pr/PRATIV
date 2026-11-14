@@ -9,7 +9,7 @@ from datetime import date
 from urllib.parse import urlparse
 
 TODAY = date.today()
-SKIP_SHA = {"subunit_sample", "social_links", "news", "website_verified_by"}
+SKIP_SHA = {"subunit_sample", "social_links", "news", "jobs", "website_verified_by"}  # news/jobs are evidenced per item (news_item_N, job_item_N)
 
 
 def sha(obj):
@@ -64,6 +64,10 @@ def main(inp, res):
             ev.setdefault(e.get("target_metric_key"), e)
             if not (e.get("source_url_link", "").startswith("http") and e.get("crawl_timestamp") and e.get("explanation_chain") and e.get("extracted_text_snippet")):
                 bad(n, f"evidence {e.get('target_metric_key')} lacks url/timestamp/explanation/snippet")
+        for kind, items in (("news", "news_item_"), ("jobs", "job_item_")):
+            have = sum(1 for key in ev if str(key).startswith(items))
+            if len(r.get("profile", {}).get(kind) or []) != have:
+                bad(n, f"{kind}: {len(r.get('profile', {}).get(kind) or [])} listed but {have} evidence record(s)")
         for k, v in r.get("profile", {}).items():
             if k in SKIP_SHA:
                 continue

@@ -39,5 +39,6 @@
   },
   "companies_with_verified_social": 21,
   "companies_with_dated_news": 11,
-  "wrong_company_checks_all_passed": 84
+  "wrong_company_checks_all_passed": 84,
+  "companies_with_job_postings": 13
 }

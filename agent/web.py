@@ -721,6 +721,12 @@ JOB_TITLE_HINT = re.compile(
 )
 # A notice or a careers article, not a vacancy. Matching on the prefix matters: boards append the location,
 # so "Open søknad produksjon Ørsta" must be rejected just like "Åpen søknad".
+# "Sjekk ledige stillinger", "See open positions": an invitation to browse, not a vacancy.
+JOB_CALL_TO_ACTION = re.compile(
+    r"^(sjekk|se|finn|utforsk|bla|check|see|browse|view|explore|find)\b.*"
+    r"\b(ledige|stillinger|stilling|\w*jobb\w*|jobs?|vacanc\w*|positions?|roller|roles|opportunit\w*|karriere|careers?)\b",
+    re.I,
+)
 JOB_NOT_A_POSTING = re.compile(
     r"^((\u00e5pen|apen|open)\s+(s\u00f8knad|soknad|application)|spontan(s\u00f8knad|soknad)?|"
     r"send (us )?(an )?application|contact us|kontakt oss)\b",
@@ -846,6 +852,8 @@ def valid_job_title(title: str) -> bool:
     bare = re.sub(r"[\s.!?…:–-]+$", "", t)
     if JOB_MENU.match(t) or MENU_LABEL.match(t) or JOB_NOT_A_POSTING.match(t) or JOB_NOT_A_POSTING.match(bare):
         return False
+    if JOB_CALL_TO_ACTION.match(t):
+        return False
     return True
 
 
@@ -916,6 +924,7 @@ def jobs_from_html(page: Page, site: str, norway_only: bool = False) -> List[Dic
             "url": url,
             "posted_at": posted,
             "found_on": page.url,
+            "employer": label,
             "source": (f"posting by {label} on the group's shared careers page" if label else
                        "posting for this company's country on the group's shared careers page") if norway_only else
                       ("link on the company's careers page" if local else
@@ -1038,9 +1047,34 @@ def jobs_from_board(page: Page, board_url: str, today: date) -> List[Dict[str, A
     return out
 
 
+def job_origin(source: str) -> str:
+    """Where a posting is hosted, so nothing claims 'own site' for a job board.
+
+    company_site             the posting is hosted on, or linked straight from, the verified company site
+    linked_from_company_site a job board, recruiter or ATS that the company's own pages link to
+    job_board_name_match     a Jobbnorge posting whose employer record has exactly this registered name
+    group_site               a group careers page, only used when the card names this exact employer
+    """
+    s = (source or "").lower()
+    if "exact employer name" in s:
+        return "job_board_name_match"
+    if "group's shared careers page" in s:
+        return "group_site"
+    if "link on the company's careers page" in s or "json-ld" in s:
+        return "company_site"
+    return "linked_from_company_site"
+
+
+def employer_matches_label(label: str, name: str) -> bool:
+    """A group careers card is attributed to this company only when it names exactly this employer."""
+    return bool(label) and employer_key(label) == employer_key(name)
+
+
 def publish_jobs(result: Dict[str, Any]) -> None:
     """Deduplicate the postings and rebuild their evidence items (the buyer summary reads these)."""
     result["jobs"] = dedupe_jobs(result["jobs"])
+    for job in result["jobs"]:
+        job.setdefault("origin", job_origin(job.get("source", "")))
     result["items"] = [it for it in result["items"] if not str(it.get("key", "")).startswith("job_item_")]
     for i, it in enumerate(result["jobs"], 1):
         when = it.get("posted_at") or "open / undated"
@@ -1527,10 +1561,12 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
         if group_url and budget.used < budget.limit:
             group_page = fetch(group_url, budget, logs)
             if group_page:
-                found = jobs_from_html(group_page, group_page.url, norway_only=True)
+                listed = jobs_from_html(group_page, group_page.url, norway_only=True)
+                found = [j for j in listed if employer_matches_label(j.get("employer", ""), name)]
                 jobs += found
-                logs.append(f"Website: the company's careers page sent us to {host_of(group_page.url)}, where "
-                            f"{len(found)} posting(s) for a Norwegian unit of the group are listed.")
+                logs.append(f"Website: the company's careers page sent us to {host_of(group_page.url)}; "
+                            f"{len(found)} of {len(listed)} Norwegian posting(s) there name exactly this employer "
+                            "(a sister or subsidiary unit such as 'Telenor Norge' is not attributed to the parent).")
     # A SuccessFactors career site linked from the company lists its postings only on its own country search.
     jobs += successfactors_jobs(pages + ([jobs_page] if jobs_page else []) + ([group_page] if group_page else []),
                                 name, today, logs, budget)
