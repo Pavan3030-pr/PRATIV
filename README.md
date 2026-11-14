@@ -51,7 +51,7 @@ Per company (`./run.sh`, or `POST /api/v1/crawl/{orgnr}`): legal name, organisat
 
 **Update detection:** `delta_sync_hash` covers the 7 core registry fields, identical to `db/profiles_1000.json`, so a stored profile and a live crawl are directly comparable. `content_hash` covers the full profile. Each result carries `update.status` (`new`, `unchanged`, `changed`) and the exact `changed_fields` (old and new values). A secondary source being temporarily unreachable is reported as unavailable and never counted as a change. `./run.sh --all` refreshes every seeded company and writes `db/profiles_enriched.json`.
 
-Tests: `cd agent && python -m unittest -v test_main test_web` (offline, no network needed). Frontend: `npm test` (Vitest), `npm run e2e` (Playwright, including an axe scan of every explorer page that fails on any serious or critical WCAG 2.1 AA violation). Current committed explorer: **1,095 profiles**, 52 with a verified website, 17 with 112 job postings, 12 with 52 dated news items, 430 with filed annual accounts.
+Tests: `cd agent && python -m unittest -v test_main test_web` (offline, no network needed). Frontend: `npm test` (Vitest), `npm run e2e` (Playwright, including an axe scan of every explorer page that fails on any serious or critical WCAG 2.1 AA violation). Current committed explorer: **1,095 profiles**, 53 with a verified website, 17 with 112 job postings, 12 with 52 dated news items, 430 with filed annual accounts.
 
 ---
 
