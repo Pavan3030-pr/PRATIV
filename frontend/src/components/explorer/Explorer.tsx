@@ -110,7 +110,7 @@ function PickButton({ org, picked, toggle }: { org: string; picked: string[]; to
       type="button"
       onClick={() => toggle(org)}
       aria-pressed={on}
-      aria-label={on ? 'Remove from comparison' : 'Add to comparison'}
+      aria-label={on ? 'Added: remove from comparison' : 'Compare: add to comparison'}
       className={cn(
         'inline-flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-control border px-3 text-[12px] font-medium transition-colors',
         on ? 'border-accent bg-accent-soft text-accent' : 'border-line-strong bg-paper text-graphite hover:bg-sunken',

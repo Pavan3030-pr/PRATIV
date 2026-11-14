@@ -562,10 +562,12 @@ def crawl(company_number: str, store: Optional[SnapshotStore] = None,
     news: List[Dict[str, Any]] = []
     jobs: List[Dict[str, Any]] = []
     web_why = None
-    if _text(registry_site) and enrich_web and web is not None:
+    if enrich_web and web is not None:
         # The registry website is a claim like any other: it is published only after the site itself
         # proves it belongs to this company (name or organisation number). A parent, sister or brand
         # site is reported in missing_fields instead of being asserted as this company's website.
+        # It is called even without a website, because job postings the employer published on a job
+        # board are readable from the board itself and do not depend on the company's own site.
         items[:] = [i for i in items if i["key"] != "website"]
         try:
             web_out = web.enrich(n, name, registry_site, sess, _throttle, logs)
@@ -591,19 +593,36 @@ def crawl(company_number: str, store: Optional[SnapshotStore] = None,
             if not news:
                 missing["news"] = "No real, dated news post (publish date, own page) was found on the verified site."
             if not jobs:
-                missing["jobs"] = "No open or dated job posting was found on the verified company site."
+                missing["jobs"] = ("No open or dated job posting was found on the verified company site or under this "
+                                   "employer's name on Jobbnorge.")
         elif site["status"] == "not_verified":
             missing["website"] = site["reason"]
-            missing["social_links"] = missing["news"] = missing["jobs"] = "Registry website is not verified as this company's own (possible parent, sister or brand site)."
+            missing["social_links"] = missing["news"] = "Registry website is not verified as this company's own (possible parent, sister or brand site)."
+            jobs = web_out.get("jobs") or []
+            if not jobs:
+                missing["jobs"] = ("Registry website is not verified as this company's own, and no Jobbnorge posting "
+                                   "was published under this employer's registered name.")
         elif site["status"] == "unreachable":
             missing["website"] = (f"The registry lists '{str(registry_site).strip()}', but the site could not be reached, so "
                                   "ownership is unproven and it is not published as this company's website.")
-            missing["social_links"] = missing["news"] = missing["jobs"] = "Website unreachable this run."
+            missing["social_links"] = missing["news"] = "Website unreachable this run."
+            jobs = web_out.get("jobs") or []
+            if not jobs:
+                missing["jobs"] = "Website unreachable this run, and no Jobbnorge posting was published under this employer's registered name."
             stale += SOURCE_GROUPS["website"]
             unavailable.append("website")
+        elif site["status"] == "no_website":
+            missing["website"] = "No website registered in Enhetsregisteret."
+            missing["social_links"] = missing["news"] = "No website registered, so this was not searched."
+            jobs = web_out.get("jobs") or []
+            if not jobs:
+                missing["jobs"] = "No website registered and no Jobbnorge posting was published under this employer's registered name."
         else:
             missing["website"] = "The registry's website value is not a usable web address."
-            missing["social_links"] = missing["news"] = missing["jobs"] = "No usable website."
+            missing["social_links"] = missing["news"] = "No usable website."
+            jobs = web_out.get("jobs") or []
+            if not jobs:
+                missing["jobs"] = "No usable website, and no Jobbnorge posting was published under this employer's registered name."
     elif web_why:
         missing["website"] = f"The registry lists '{str(registry_site).strip()}', but ownership could not be verified ({web_why})."
         missing["social_links"] = missing["news"] = missing["jobs"] = web_why
@@ -613,7 +632,7 @@ def crawl(company_number: str, store: Optional[SnapshotStore] = None,
     else:
         missing.setdefault("social_links", "No website registered, so no social links were searched.")
         missing.setdefault("news", "No website registered, so no news was searched.")
-        missing.setdefault("jobs", "No website registered, so no jobs were searched.")
+        missing.setdefault("jobs", "No website registered and no Jobbnorge posting was published under this employer's registered name.")
     evidences = [{"target_metric_key": i["key"], "extracted_text_snippet": i["snippet"], "source_url_link": i["url"],
                   "crawl_timestamp": ts, "explanation_chain": i["why"], "field_path": i["path"],
                   "value_sha256": sha(i["value"])} for i in items + web_items]

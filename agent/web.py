@@ -962,6 +962,22 @@ def jobs_from_board(page: Page, board_url: str, today: date) -> List[Dict[str, A
     return out
 
 
+def publish_jobs(result: Dict[str, Any]) -> None:
+    """Deduplicate the postings and rebuild their evidence items (the buyer summary reads these)."""
+    result["jobs"] = dedupe_jobs(result["jobs"])
+    result["items"] = [it for it in result["items"] if not str(it.get("key", "")).startswith("job_item_")]
+    for i, it in enumerate(result["jobs"], 1):
+        when = it.get("posted_at") or "open / undated"
+        result["items"].append({
+            "key": f"job_item_{i}",
+            "value": f"{when} {it['title']}",
+            "snippet": f"{when}: {it['title']}",
+            "url": it["url"],
+            "path": it["source"],
+            "why": f"{it['source']}; title, employer and date read from {it['found_on']}, nothing inferred.",
+        })
+
+
 def dedupe_jobs(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen, out = set(), []
     for it in items:
@@ -970,6 +986,93 @@ def dedupe_jobs(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             seen.add(key)
             out.append(it)
     return out[:MAX_JOBS]
+
+
+# --------------------------------------------------------------------------- 4b. Jobbnorge
+# Jobbnorge's own search page is a JavaScript shell: fetched as HTML it lists nothing. Their search page reads
+# publicapi.jobbnorge.no/v3/jobs, a public JSON feed that carries employerID, employer name, title, link and
+# publication date, so the same postings can be read without rendering JavaScript.
+JOBNORGE_API = "https://publicapi.jobbnorge.no/v3/jobs?language=1"
+JOBNORGE_TTL = 900                      # one feed request per 15 minutes, shared by every company in a run
+_JOB_EMPLOYER_LINK = re.compile(r"jobbnorge\.no/(?:[a-z]{2}/)?(?:search|ledige-stillinger)[^\"'\s<>]*?[?&]employer=(\d+)", re.I)
+_jobbnorge: Dict[str, Any] = {"at": None, "jobs": []}
+LEGAL_FORM_WORDS = ("asa", "as", "ans", "da", "sa", "ks", "nuf", "enk", "iks", "sf", "stiftelse", "stiftelsen", "ab", "oy")
+
+
+def employer_key(text: str) -> str:
+    """Fold a registered name and a Jobbnorge employer name to the same key, dropping the legal form."""
+    folded = text.casefold().replace("\u00e6", "ae").replace("\u00f8", "o").replace("\u00e5", "a")
+    folded = unicodedata.normalize("NFKD", folded).encode("ascii", "ignore").decode("ascii")
+    folded = re.sub(r"[^a-z0-9& ]+", " ", folded)
+    words = [w for w in folded.split() if w not in LEGAL_FORM_WORDS]
+    return " ".join(words).strip()
+
+
+def jobbnorge_feed(logs: List[str]) -> List[Dict[str, Any]]:
+    """All open Jobbnorge postings, cached per process. A failed read is cached too, so a run never hammers it."""
+    now = datetime.now(timezone.utc)
+    at = _jobbnorge.get("at")
+    if isinstance(at, datetime) and (now - at).total_seconds() < JOBNORGE_TTL:
+        return _jobbnorge["jobs"]
+    jobs: List[Dict[str, Any]] = []
+    try:
+        resp = requests.get(JOBNORGE_API, headers=WEB_HEADERS, timeout=WEB_TIMEOUT)
+        data = resp.json() if resp.status_code == 200 else None
+        found = data.get("jobs") if isinstance(data, dict) else None
+        if not isinstance(found, list):
+            raise ValueError("no job list")
+        jobs = [j for j in found if isinstance(j, dict)]
+        logs.append(f"Website: the Jobbnorge job API listed {len(jobs)} open posting(s).")
+    except (requests.RequestException, ValueError):
+        logs.append("Website: the Jobbnorge job API could not be read; Jobbnorge postings were skipped.")
+    _jobbnorge.update(at=now, jobs=jobs)
+    return jobs
+
+
+def jobbnorge_employer_ids(pages: List[Page]) -> List[str]:
+    ids: List[str] = []
+    for page in pages:
+        for a in page.soup.find_all("a", href=True):
+            m = _JOB_EMPLOYER_LINK.search(html.unescape(a["href"]))
+            if m and m.group(1) not in ids:
+                ids.append(m.group(1))
+    return ids
+
+
+def jobbnorge_jobs(name: str, employer_ids: List[str], today: date, logs: List[str]) -> List[Dict[str, Any]]:
+    """Postings the employer itself published on Jobbnorge, matched by employer id or exact employer name."""
+    wanted = employer_key(name)
+    wanted_tokens = set(wanted.split())
+    # A registered name and a board employer name are often the same words in another order
+    # ("NORGES TEKNISK-... UNIVERSITET NTNU" vs "NTNU - Norges teknisk-... universitet").
+    use_name = not employer_ids and len(wanted) >= 8 and len(wanted_tokens) >= 2
+    ids = set(employer_ids)
+    matched = 0
+    out: List[Dict[str, Any]] = []
+    for job in jobbnorge_feed(logs):
+        employer = job.get("employer") if isinstance(job.get("employer"), str) else ""
+        by_id = str(job.get("employerID")) in ids
+        by_name = use_name and set(employer_key(employer).split()) == wanted_tokens
+        if not (by_id or by_name):
+            continue
+        matched += 1
+        title = _clean_title(job.get("title") or "")
+        link = job.get("link") if isinstance(job.get("link"), str) else ""
+        if not valid_job_title(title) or not JOB_TITLE_HINT.search(title) or not is_job_board_posting(link):
+            continue
+        posted = parse_date(job.get("publicationDate"))
+        out.append({
+            "title": title,
+            "url": link,
+            "posted_at": posted.isoformat() if valid_publish_date(posted, today) else None,
+            "found_on": f"{JOBNORGE_API} (employer {employer})",
+            "source": "Jobbnorge public job API, employer matched " + ("by the employer link on the company site" if by_id else "by exact employer name"),
+        })
+        if len(out) >= MAX_JOBS:
+            break
+    if matched and not out:
+        logs.append(f"Website: Jobbnorge showed {matched} posting(s) for this employer but none had a usable role title.")
+    return out
 
 
 # --------------------------------------------------------------------------- orchestration
@@ -983,8 +1086,12 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
                                           "pages_checked": []},
                               "social_links": [], "news": [], "jobs": [], "items": []}
     site = result["website"]
+    # Postings the employer published on Jobbnorge are readable without the company's own site, and the
+    # employer match (exact name) is the proof, so they are collected before any website work.
+    result["jobs"] = jobbnorge_jobs(name, [], today, logs)
     if not url:
-        logs.append("Website: the registry lists no usable website; social links, news and jobs are not searched.")
+        logs.append("Website: the registry lists no usable website; social links and news are not searched.")
+        publish_jobs(result)
         return result
     budget = WebBudget(sess, throttle)
     home = fetch(url, budget, logs)
@@ -992,7 +1099,8 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
         home = fetch("http://" + url[len("https://"):], budget, logs)
     if home is None:
         site.update(status="unreachable", url=url)
-        logs.append(f"Website: {url} could not be read, so ownership could not be verified; social links, news and jobs left empty.")
+        logs.append(f"Website: {url} could not be read, so ownership could not be verified; social links and news from the site are left empty.")
+        publish_jobs(result)
         return result
     site["pages_checked"].append(home.url)
     site_url = home.url
@@ -1016,6 +1124,7 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
             f"{host} shows neither organisation number {number} nor the exact name '{name}' on the home page or its contact/about/privacy pages; "
             "it is treated as a parent-group or brand site, so no social links, news or jobs were taken from it."))
         logs.append("Website: " + site["reason"])
+        publish_jobs(result)
         return result
     site.update(status="verified", verified=True, verified_by=how, url=site_url,
                 verified_on=verified_page.url if verified_page else site_url)
@@ -1072,7 +1181,7 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
                                 "why": f"Dated post on the verified company site; publish date {it['published_at']} from {it['source']} "
                                        f"(modified/updated dates are never used); found on {it['found_on']}."})
 
-    jobs: List[Dict[str, Any]] = []
+    jobs: List[Dict[str, Any]] = list(result["jobs"])
     jobs_url = find_jobs_page(pages)
     if not jobs_url:
         for cand in sitemap_pages():
@@ -1106,21 +1215,16 @@ def enrich(number: str, name: str, registry_website: Any, sess: Any, throttle: C
             jobs += found
             break
     jobs += jobs_from_jsonld(home, site_url, today)
-    jobs = dedupe_jobs(jobs)
+    # Jobbnorge postings are published by the employer on a job board, not on its own site. Read the board's
+    # public JSON feed rather than the JavaScript page, matching this employer by id or by exact employer name.
+    ids = jobbnorge_employer_ids(pages + ([jobs_page] if jobs_page else []))
+    if ids:
+        # The employer link on the site is stronger proof than a name match, so it replaces those entries.
+        jobs = [j for j in jobs if "exact employer name" not in j["source"]]
+    jobs += jobbnorge_jobs(name, ids, today, logs)
     result["jobs"] = jobs
-    for i, it in enumerate(jobs, 1):
-        when = it.get("posted_at") or "open / undated"
-        result["items"].append({
-            "key": f"job_item_{i}",
-            "value": f"{when} {it['title']}",
-            "snippet": f"{when}: {it['title']}",
-            "url": it["url"],
-            "path": it["source"],
-            "why": (
-                f"Job posting linked from the verified company site; "
-                f"title and URL taken from the company's own page ({it['found_on']})."
-            ),
-        })
+    publish_jobs(result)
+    jobs = result["jobs"]
 
     logs.append(
         f"Website: {len(social)} social account(s), {len(news)} dated news item(s), "

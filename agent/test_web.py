@@ -1,4 +1,5 @@
 """Offline tests for website ownership, social-link and news rules (the three audit findings)."""
+import json
 import unittest
 from datetime import date
 from unittest.mock import patch
@@ -22,6 +23,9 @@ class Resp:
     @property
     def text(self):
         return self._body.decode("utf-8", errors="replace")
+
+    def json(self):
+        return json.loads(self._body)
 
     def iter_content(self, size):
         yield self._body
@@ -57,6 +61,7 @@ def dispatch(routes, web_fake):
 
 def run(pages, website="https://foo.no", name=NAME, cap=100, number=N):
     logs = []
+    web._jobbnorge.update(at=None, jobs=[])     # one Jobbnorge read per test, never shared between them
     with patch("web.requests.get", side_effect=site(pages)) as get, patch("web.public_host", return_value=True):
         out = web.enrich(number, name, website, Sess(cap), lambda: None, logs, TODAY)
     out["get"], out["logs"] = get, logs
@@ -426,6 +431,102 @@ class CoreIntegrationTests(unittest.TestCase):
             r = self.crawl({})
         self.assertEqual(r["official_legal_name"], NAME)
         self.assertIn("Website check failed", r["missing_fields"]["news"])
+
+
+API = web.JOBNORGE_API
+
+
+def feed(*jobs):
+    return json.dumps({"jobs": list(jobs)}, ensure_ascii=False)
+
+
+def jb(id_, employer, employer_id, title, date="10.11.2026", **over):
+    job = {"id": id_, "employer": employer, "employerID": employer_id, "title": title,
+           "link": f"https://www.jobbnorge.no/ledige-stillinger/stilling/{id_}", "publicationDate": date}
+    job.update(over)
+    return job
+
+
+class JobbnorgeTests(unittest.TestCase):
+    def setUp(self):
+        web._jobbnorge.update(at=None, jobs=[])
+
+    def home(self, extra=""):
+        return f'<body>{FOOTER_OWN}<nav><a href="/om-oss">Om oss</a></nav>{extra}</body>'
+
+    def test_employer_id_from_the_site_selects_only_that_employers_postings(self):
+        home = self.home('<a href="https://www.jobbnorge.no/search?employer=789#1">Ledige stillinger</a>')
+        api = feed(jb(1, "Foo Norge", 789, "Senior utvikler", date="10.10.2026"),
+                   jb(2, "Bar Kommune", 123, "Barnehagelærer"),
+                   jb(3, "Foo Norge", 789, "Regnskapsfører", date="01.10.2026"))
+        r = run({"https://foo.no": home, API: (200, api, {"Content-Type": "application/json"})})
+        self.assertEqual([(j["title"], j["posted_at"]) for j in r["jobs"]],
+                         [("Senior utvikler", "2026-10-10"), ("Regnskapsfører", "2026-10-01")])
+        self.assertTrue(all(j["url"].startswith("https://www.jobbnorge.no/ledige-stillinger/stilling/") for j in r["jobs"]))
+        self.assertIn("employer link", r["jobs"][0]["source"])
+        self.assertTrue(any("Jobbnorge job API listed 3" in line for line in r["logs"]))
+
+    def test_exact_employer_name_matches_when_the_site_links_no_job_board(self):
+        api = feed(jb(1, "Foo Norge AS", 900, "Butikkmedarbeider"),
+                   jb(2, "Foo Norge Service", 901, "Renholder"),
+                   jb(3, "Foo Norge Gruppen", 902, "Selger"))
+        r = run({"https://foo.no": self.home(), API: (200, api, {"Content-Type": "application/json"})})
+        self.assertEqual([j["title"] for j in r["jobs"]], ["Butikkmedarbeider"])
+        self.assertIn("exact employer name", r["jobs"][0]["source"])
+
+    def test_the_same_name_in_another_order_still_matches(self):
+        api = feed(jb(1, "Foo - Norge AS", 900, "Butikkmedarbeider"))
+        r = run({"https://foo.no": self.home(), API: (200, api, {"Content-Type": "application/json"})})
+        self.assertEqual([j["title"] for j in r["jobs"]], ["Butikkmedarbeider"])
+
+    def test_an_employer_with_an_extra_word_is_not_matched_by_name(self):
+        api = feed(jb(1, "Foo Norge Service AS", 901, "Renholder"))
+        r = run({"https://foo.no": self.home(), API: (200, api, {"Content-Type": "application/json"})})
+        self.assertEqual(r["jobs"], [])
+
+    def test_the_javascript_search_page_is_not_needed(self):
+        home = self.home('<a href="https://www.jobbnorge.no/search?employer=789">Stillinger</a>')
+        shell = '<html><body><div id="app"></div><script src="/search/site.min.js"></script></body></html>'
+        api = feed(jb(11, "Foo Norge", 789, "Prosjektleder bygg"))
+        r = run({"https://foo.no": home, "https://www.jobbnorge.no/search?employer=789": shell,
+                 API: (200, api, {"Content-Type": "application/json"})})
+        self.assertEqual([j["title"] for j in r["jobs"]], ["Prosjektleder bygg"])
+
+    def test_menu_labels_and_unusable_titles_are_rejected(self):
+        api = feed(jb(1, "Foo Norge", 789, "Ledige stillinger"), jb(2, "Foo Norge", 789, "Se alle jobber"))
+        home = self.home('<a href="https://www.jobbnorge.no/search?employer=789">Ledige stillinger</a>')
+        r = run({"https://foo.no": home, API: (200, api, {"Content-Type": "application/json"})})
+        self.assertEqual(r["jobs"], [])
+        self.assertTrue(any("none had a usable role title" in line for line in r["logs"]))
+
+    def test_unreadable_api_is_reported_and_costs_no_website_facts(self):
+        home = self.home('<a href="https://www.jobbnorge.no/search?employer=789">Ledige stillinger</a>')
+        r = run({"https://foo.no": home, API: requests.ConnectionError("down")})
+        self.assertEqual(r["jobs"], [])
+        self.assertEqual(r["website"]["status"], "verified")
+        self.assertTrue(any("Jobbnorge job API could not be read" in line for line in r["logs"]))
+
+    def test_the_feed_is_read_once_for_many_companies(self):
+        api = feed(jb(1, "Foo Norge", 789, "Senior utvikler"))
+        calls = []
+        pages = {"https://foo.no": self.home('<a href="https://www.jobbnorge.no/search?employer=789">Stillinger</a>')}
+        fake = site({**pages, API: (200, api, {"Content-Type": "application/json"})})
+
+        def counting(url, **kw):
+            if url == API:
+                calls.append(url)
+            return fake(url, **kw)
+
+        with patch("web.requests.get", side_effect=counting), patch("web.public_host", return_value=True):
+            for _ in range(3):
+                web.enrich(N, NAME, "https://foo.no", Sess(), lambda: None, [], TODAY)
+        self.assertEqual(len(calls), 1)
+
+    def test_a_publish_date_outside_the_window_is_not_asserted(self):
+        api = feed(jb(1, "Foo Norge", 789, "Selger butikk", date="31.12.1999"))
+        home = self.home('<a href="https://www.jobbnorge.no/search?employer=789">Stillinger</a>')
+        r = run({"https://foo.no": home, API: (200, api, {"Content-Type": "application/json"})})
+        self.assertEqual([(j["title"], j["posted_at"]) for j in r["jobs"]], [("Selger butikk", None)])
 
 
 class RobotsTests(unittest.TestCase):

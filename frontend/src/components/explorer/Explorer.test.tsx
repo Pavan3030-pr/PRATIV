@@ -158,7 +158,7 @@ describe('explorer search', () => {
     expect(screen.queryByText('DNB BANK ASA')).not.toBeInTheDocument()
 
     const row = screen.getByText('EQUINOR ASA').closest('li') as HTMLElement
-    await userEvent.click(within(row).getByRole('button', { name: 'Add to comparison' }))
+    await userEvent.click(within(row).getByRole('button', { name: 'Compare: add to comparison' }))
     expect(screen.getByText(/selected — pick one more to compare/)).toBeInTheDocument()
   })
 })

@@ -22,14 +22,15 @@ test('how it works names the sources and the limits', async ({ page }) => {
 })
 
 test('a company outside the dataset is read live from the register', async ({ page }) => {
+  // 918967230 is a real register record that this crawl does not contain, so the page must come from Brreg.
   const entity = {
-    organisasjonsnummer: '982463718',
-    navn: 'TELENOR ASA',
-    organisasjonsform: { kode: 'ASA' },
-    stiftelsesdato: '1996-11-07',
-    antallAnsatte: 9000,
-    naeringskode1: { beskrivelse: 'Trådløs telekommunikasjon' },
-    forretningsadresse: { adresse: ['Snarøyveien 30'], postnummer: '1360', poststed: 'FORNEBU', land: 'Norge' },
+    organisasjonsnummer: '918967230',
+    navn: 'TELENOR ASIA IHQ',
+    organisasjonsform: { kode: 'NUF' },
+    stiftelsesdato: '2017-06-19',
+    antallAnsatte: 12,
+    naeringskode1: { beskrivelse: 'Telekommunikasjon' },
+    forretningsadresse: { adresse: ['Sukhumvit Road'], postnummer: '10110', poststed: 'BANGKOK', land: 'Thailand' },
   }
   // Keep the test independent of what the committed crawl happens to contain.
   await page.route('**/explore/index.json', (route) =>
@@ -38,21 +39,21 @@ test('a company outside the dataset is read live from the register', async ({ pa
   await page.route('**/data.brreg.no/**', (route) => {
     const url = route.request().url()
     if (url.includes('?navn=')) return route.fulfill({ json: { _embedded: { enheter: [entity] } } })
-    if (url.endsWith('/982463718')) return route.fulfill({ json: entity })
+    if (url.endsWith('/918967230')) return route.fulfill({ json: entity })
     return route.fulfill({ status: 404, body: 'not found' })
   })
 
   await page.goto('/#/explore')
   await page.getByRole('searchbox').fill('telenor')
   await expect(page.getByText(/Found in Enhetsregisteret/)).toBeVisible()
-  await page.getByRole('link', { name: /TELENOR ASA/ }).first().click()
+  await page.getByRole('link', { name: /TELENOR ASIA IHQ/ }).first().click()
 
-  await expect(page.getByRole('heading', { name: 'TELENOR ASA', level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'TELENOR ASIA IHQ', level: 1 })).toBeVisible()
   await expect(page.getByText('Registry only')).toBeVisible()
-  await expect(page.getByText('Trådløs telekommunikasjon')).toBeVisible()
+  await expect(page.getByText('Telekommunikasjon')).toBeVisible()
   await expect(page.getByRole('link', { name: /Official record/ })).toHaveAttribute(
     'href',
-    'https://data.brreg.no/enhetsregisteret/api/enheter/982463718',
+    'https://data.brreg.no/enhetsregisteret/api/enheter/918967230',
   )
 })
 

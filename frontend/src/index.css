@@ -18,8 +18,10 @@
   --color-ink: #0a0a0a;
   --color-ink-soft: #18181b;
   --color-graphite: #3f3f46;
-  --color-muted: #71717a;
-  --color-faint: #a1a1aa;
+  /* Secondary and tertiary text: measured against canvas, sunken and paper surfaces so that
+     12px and 11.5px labels clear the WCAG AA 4.5:1 threshold (axe runs on every page). */
+  --color-muted: #52525b;
+  --color-faint: #63636b;
 
   /* Surfaces */
   --color-paper: #ffffff;
